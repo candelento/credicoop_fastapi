@@ -1,0 +1,48 @@
+﻿tipo;uso;cbuCvu;nombre;documento;documentoTipo;tipoCuenta;hojaOrigen
+transferencia;emision;0290023010000000555675;KRAFT ELVA ROSA;30677886370;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0200902911000060065458;PIAZZA, ANA KARINA;27237632813;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0930300120100007868839;MARTIN MAURO;27267518152;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0930301821500215175146;ULLOA SPICHIJER MARCELA;27248772129;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0440000430000000021761;PERASSO EMILIO CESAR;20338030739;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;3300002010020002001075;MININ, MARCELA MARIA;27253292100;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;0290000110000010015525;VERDE GABRIELA EDITH;23243759994;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;1910001855000100769614;ALCONIS SRL;30592067494;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;1910010055101001084603;SCARPELLI ELVIRA BEATRIZ;27203123995;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0440004240000128580994;STOMBOLI DIEGO;20270659730;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;1910001855000151634064;AF MENDEZ;27328254374;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;0200301411000011309930;LOSADA ESTER;27051417416;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0440000440000117729768;IBARRA SEBASTIAN;20253178338;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;1910119655111901183599;ALBARENQUE PABLO ARIEL;20297786483;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;1910001855000135968800;FERROMEL SA;30576179274;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;1910022355102201433985;GARCIA MARCOS MATIAS DAMIAN;20315419655;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;3410001901000103658215;ALTHA AHRNS;27182255233;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0440000440000116485618;ALVAREZ MARIA VICTORIA;27251001702;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;3410001902000300026050;SIEMBRAS ARGENTINAS SI AR SRL;30709892378;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;0290023010000000039489;CANUDAS EDUARDO DANIEL;20125480161;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0290053710000005775461;ETKIN ESTHER;27046519014;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0290000110000010158839;QUATRINI MARIA LUJAN;27335579939;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0440029540000128567535;GRIMALT PETRONA;27024941324;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;2810001213010496730013;BRITOS, JUAN PABLO;20216567200;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;3410001901000108964555;DAKAK JOSE HUMBERTO;20104933735;CUIT/CUIL/CDI;CA$;Beneficiarios Transferencias
+transferencia;emision;0440000430000000016031;PUENTES ELEONORA MARIA;23165227344;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;0440000430000000017621;GINER MARIA ALEJANDRA;27173044106;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;0970099410004513430018;CABEZA NESTOR FABIAN;20203925795;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;3410001902000300000036;JOSE HUMBERTO DAKAK;20104933735;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;emision;0168888100008071740450;ANIXTER ARGENTINA SA;30682472142;CUIT/CUIL/CDI;CC$;Beneficiarios Transferencias
+transferencia;alta;1910028555002851467650;BLANCO JUAN CARLOS;20228789144;CUIT/CUIL/CDI;CC$;Alta Beneficiarios Transf.
+transferencia;alta;0290023000000000028778;PEREZ CELIA ANGELES;30999032083;CUIT/CUIL/CDI;CC$;Alta Beneficiarios Transf.
+transferencia;alta;1910006355000608472696;PRIMORE SRL;30697613664;CUIT/CUIL/CDI;CC$;Alta Beneficiarios Transf.
+echeq;emision;;FUNDACION MEDICA DE MAR DEL PLATA;30546125501;CUIT;;Beneficiarios Echeq
+echeq;emision;;ENRICO EDIE AGUSTIN;20201448353;CUIT;;Beneficiarios Echeq
+echeq;emision;;LESCANO ANDRADA MIGUEL ALEJANDRO;20387647261;CUIT;;Beneficiarios Echeq
+echeq;emision;;HOLLAND ZUNILDA ANDREA;27385679535;CUIT;;Beneficiarios Echeq
+echeq;emision;;HOLLAND RICARDO SE;20412310978;CUIT;;Beneficiarios Echeq
+echeq;emision;;ESSEN ALUMINIO S.A.;30506038460;CUIT;;Beneficiarios Echeq
+echeq;emision;;COL VEN S.A.;30560312411;CUIT;;Beneficiarios Echeq
+echeq;emision;;GOMIZ GOMI JOSE ANTON;20138236502;CUIL;;Beneficiarios Echeq
+echeq;emision;;ALEJANDRA SZIR;27139764078;CUIL;;Beneficiarios Echeq
+echeq;alta;;BANCO DE VALORES S.A.;30576124275;CUIT;;Alta BEneficiarios Echeq
+echeq;alta;;CAJA DE VALORES SA.;30554475910;CUIT;;Alta BEneficiarios Echeq
+echeq;alta;;DACAR GNC S.A.;33694944049;CUIT;;Alta BEneficiarios Echeq
+echeq;alta;;DIETRICH S.A.;30541849307;CUIT;;Alta BEneficiarios Echeq
+echeq;alta;;FERROMEL S.A.;30576179274;CUIT;;Alta BEneficiarios Echeq

@@ -1,0 +1,476 @@
+{
+  "ambiente": "homologacion",
+  "fuente": "BeneficiariosHomologacionAPI EMPRESA(1).xls",
+  "beneficiarios": [
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0290023010000000555675",
+      "nombre": "KRAFT ELVA ROSA",
+      "documento": "30677886370",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0200902911000060065458",
+      "nombre": "PIAZZA, ANA KARINA",
+      "documento": "27237632813",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0930300120100007868839",
+      "nombre": "MARTIN MAURO",
+      "documento": "27267518152",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0930301821500215175146",
+      "nombre": "ULLOA SPICHIJER MARCELA",
+      "documento": "27248772129",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0440000430000000021761",
+      "nombre": "PERASSO EMILIO CESAR",
+      "documento": "20338030739",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "3300002010020002001075",
+      "nombre": "MININ, MARCELA MARIA",
+      "documento": "27253292100",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0290000110000010015525",
+      "nombre": "VERDE GABRIELA EDITH",
+      "documento": "23243759994",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "1910001855000100769614",
+      "nombre": "ALCONIS SRL",
+      "documento": "30592067494",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "1910010055101001084603",
+      "nombre": "SCARPELLI ELVIRA BEATRIZ",
+      "documento": "27203123995",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0440004240000128580994",
+      "nombre": "STOMBOLI DIEGO",
+      "documento": "20270659730",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "1910001855000151634064",
+      "nombre": "AF MENDEZ",
+      "documento": "27328254374",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0200301411000011309930",
+      "nombre": "LOSADA ESTER",
+      "documento": "27051417416",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0440000440000117729768",
+      "nombre": "IBARRA SEBASTIAN",
+      "documento": "20253178338",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "1910119655111901183599",
+      "nombre": "ALBARENQUE PABLO ARIEL",
+      "documento": "20297786483",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "1910001855000135968800",
+      "nombre": "FERROMEL SA",
+      "documento": "30576179274",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "1910022355102201433985",
+      "nombre": "GARCIA MARCOS MATIAS DAMIAN",
+      "documento": "20315419655",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "3410001901000103658215",
+      "nombre": "ALTHA AHRNS",
+      "documento": "27182255233",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0440000440000116485618",
+      "nombre": "ALVAREZ MARIA VICTORIA",
+      "documento": "27251001702",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "3410001902000300026050",
+      "nombre": "SIEMBRAS ARGENTINAS SI AR SRL",
+      "documento": "30709892378",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0290023010000000039489",
+      "nombre": "CANUDAS EDUARDO DANIEL",
+      "documento": "20125480161",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0290053710000005775461",
+      "nombre": "ETKIN ESTHER",
+      "documento": "27046519014",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0290000110000010158839",
+      "nombre": "QUATRINI MARIA LUJAN",
+      "documento": "27335579939",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0440029540000128567535",
+      "nombre": "GRIMALT PETRONA",
+      "documento": "27024941324",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "2810001213010496730013",
+      "nombre": "BRITOS, JUAN PABLO",
+      "documento": "20216567200",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "3410001901000108964555",
+      "nombre": "DAKAK JOSE HUMBERTO",
+      "documento": "20104933735",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CA$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0440000430000000016031",
+      "nombre": "PUENTES ELEONORA MARIA",
+      "documento": "23165227344",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0440000430000000017621",
+      "nombre": "GINER MARIA ALEJANDRA",
+      "documento": "27173044106",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0970099410004513430018",
+      "nombre": "CABEZA NESTOR FABIAN",
+      "documento": "20203925795",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "3410001902000300000036",
+      "nombre": "JOSE HUMBERTO DAKAK",
+      "documento": "20104933735",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "emision",
+      "cbuCvu": "0168888100008071740450",
+      "nombre": "ANIXTER ARGENTINA SA",
+      "documento": "30682472142",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Beneficiarios Transferencias"
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "alta",
+      "cbuCvu": "1910028555002851467650",
+      "nombre": "BLANCO JUAN CARLOS",
+      "documento": "20228789144",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Alta Beneficiarios Transf."
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "alta",
+      "cbuCvu": "0290023000000000028778",
+      "nombre": "PEREZ CELIA ANGELES",
+      "documento": "30999032083",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Alta Beneficiarios Transf."
+    },
+    {
+      "tipo": "transferencia",
+      "uso": "alta",
+      "cbuCvu": "1910006355000608472696",
+      "nombre": "PRIMORE SRL",
+      "documento": "30697613664",
+      "documentoTipo": "CUIT/CUIL/CDI",
+      "tipoCuenta": "CC$",
+      "hojaOrigen": "Alta Beneficiarios Transf."
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "FUNDACION MEDICA DE MAR DEL PLATA",
+      "documento": "30546125501",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "ENRICO EDIE AGUSTIN",
+      "documento": "20201448353",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "LESCANO ANDRADA MIGUEL ALEJANDRO",
+      "documento": "20387647261",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "HOLLAND ZUNILDA ANDREA",
+      "documento": "27385679535",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "HOLLAND RICARDO SE",
+      "documento": "20412310978",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "ESSEN ALUMINIO S.A.",
+      "documento": "30506038460",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "COL VEN S.A.",
+      "documento": "30560312411",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "GOMIZ GOMI JOSE ANTON",
+      "documento": "20138236502",
+      "documentoTipo": "CUIL",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "emision",
+      "cbuCvu": "",
+      "nombre": "ALEJANDRA SZIR",
+      "documento": "27139764078",
+      "documentoTipo": "CUIL",
+      "tipoCuenta": "",
+      "hojaOrigen": "Beneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "alta",
+      "cbuCvu": "",
+      "nombre": "BANCO DE VALORES S.A.",
+      "documento": "30576124275",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Alta BEneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "alta",
+      "cbuCvu": "",
+      "nombre": "CAJA DE VALORES SA.",
+      "documento": "30554475910",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Alta BEneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "alta",
+      "cbuCvu": "",
+      "nombre": "DACAR GNC S.A.",
+      "documento": "33694944049",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Alta BEneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "alta",
+      "cbuCvu": "",
+      "nombre": "DIETRICH S.A.",
+      "documento": "30541849307",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Alta BEneficiarios Echeq"
+    },
+    {
+      "tipo": "echeq",
+      "uso": "alta",
+      "cbuCvu": "",
+      "nombre": "FERROMEL S.A.",
+      "documento": "30576179274",
+      "documentoTipo": "CUIT",
+      "tipoCuenta": "",
+      "hojaOrigen": "Alta BEneficiarios Echeq"
+    }
+  ]
+}

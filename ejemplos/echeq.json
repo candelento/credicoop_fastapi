@@ -1,0 +1,20 @@
+{
+  "cbuCuentaDebito": "REEMPLAZAR_CON_CBU_DE_TU_CUENTA",
+  "operadoresFirmantes": [],
+  "idOrigen": "homo-echeq-001",
+  "echeqs": [
+    {
+      "monto": "15.79",
+      "fechaPago": "2026-09-02",
+      "motivoPago": "PRUEBA HOMOLOGACION",
+      "caracter": "1",
+      "modo": "1",
+      "beneficiarioNombre": "FUNDACION MEDICA DE MAR DEL PLATA",
+      "beneficiarioDocumentoTipo": "CUIT",
+      "beneficiarioDocumento": "30546125501",
+      "concepto": "VAR",
+      "tipoCheque": "ECHD",
+      "mails": []
+    }
+  ]
+}

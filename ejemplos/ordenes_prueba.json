@@ -1,0 +1,9 @@
+{
+  "ambiente": "homologacion",
+  "importe_prueba_predeterminado": "15.79",
+  "ordenes": [
+    {"orden":"0001-00049861","proveedorCodigo":"579","proveedorOriginal":"CENTRO DIAGNOSTICO LANUS S.A.","medioOriginal":"TRB","fechaOriginal":"2026-10-01","importeOriginal":"181943.75","retenciones":"1691.90","fuente":"op-0001-00049861.pdf"},
+    {"orden":"0001-00049881","proveedorCodigo":"32","proveedorOriginal":"MARTI GONZALEZ DONADIO S A I C","medioOriginal":"CHE","fechaOriginal":"2026-10-09","importeOriginal":"2417697.13","retenciones":"37108.82","fuente":"op-0001-00049881.pdf"},
+    {"orden":"0001-00049890","proveedorCodigo":"20244","proveedorOriginal":"BRUNO JULIAN RUBEN","medioOriginal":"TRB","fechaOriginal":"2026-10-05","importeOriginal":"4614265.00","retenciones":"623825.00","fuente":"op-0001-00049890.pdf"}
+  ]
+}

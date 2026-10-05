@@ -1,0 +1,19 @@
+{
+  "cbuCuentaDebito": "REEMPLAZAR_CON_CBU_DE_TU_CUENTA",
+  "operadoresFirmantes": [],
+  "idOrigen": "homo-transf-001",
+  "beneficiarios": [
+    {
+      "cbuCvu": "0290023010000000555675",
+      "esCuentaPropia": "N",
+      "monto": "101.12",
+      "moneda": "ARS",
+      "concepto": "VAR",
+      "cui": "30677886370",
+      "nombre": "KRAFT ELVA ROSA",
+      "observaciones": "PRUEBA HOMOLOGACION",
+      "referenciaConcepto": "PRUEBA001",
+      "mails": []
+    }
+  ]
+}
