@@ -17,7 +17,9 @@ from app.orders import (
     DriveOrderService,
     Supplier,
     build_order_instruction,
+    load_homologation_suppliers,
     load_supplier_master,
+    merge_supplier_sources,
     normalize_text,
     order_origin,
     parse_order,
@@ -94,6 +96,25 @@ def test_supplier_master_reads_required_columns(tmp_path):
     assert load_supplier_master(path) == {normalize_text(SUPPLIER.name): [SUPPLIER]}
 
 
+def test_homologation_suppliers_are_merged_with_beneficiarios_credicoop(tmp_path):
+    path = tmp_path / 'beneficiarios.xlsx'
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'Beneficiarios Transferencias'
+    sheet.append(['CBU', 'NOMBRE', 'CUIT-CUIL-CDI'])
+    sheet.append([SUPPLIER.cbu, SUPPLIER.name, SUPPLIER.document])
+    workbook.save(path)
+
+    master = load_supplier_master(path)
+    homologation = load_homologation_suppliers(Path(__file__).resolve().parents[1] / 'ejemplos' / 'beneficiarios_homologacion.json')
+    merged = merge_supplier_sources(master, homologation)
+
+    assert normalize_text(SUPPLIER.name) in merged
+    assert normalize_text('KRAFT ELVA ROSA') in merged
+    assert any(s.document == '30677886370' and s.cbu == '0290023010000000555675'
+               for s in merged[normalize_text('KRAFT ELVA ROSA')])
+
+
 def test_drive_listing_strictly_filters_name_and_mime_type():
     requested = []
 
@@ -142,6 +163,76 @@ def test_journal_deduplicates_content_and_blocks_modified_source(tmp_path):
     journal.store_order(unresolved)
     resolved = dict(unresolved, status='READY')
     assert journal.store_order(resolved)['status'] == 'READY'
+
+
+def test_sync_keeps_only_pdfs_currently_present_in_drive(tmp_path, monkeypatch):
+    journal = Journal(tmp_path / 'orders.sqlite3')
+    journal.store_order({
+        'source_id': 'drive-old',
+        'source_name': 'op-old.pdf',
+        'sha256': hashlib.sha256(b'old').hexdigest(),
+        'id_origen': order_origin('drive-old'),
+        'status': 'READY',
+        'reason': None,
+        'method': 'TRB',
+        'supplier': {'name': SUPPLIER.name, 'document': SUPPLIER.document, 'cbu': SUPPLIER.cbu},
+        'amount': '10.00',
+        'cheque_date': None,
+        'cheque_type': None,
+    })
+
+    class FakeDownloadResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_bytes(self):
+            yield b'%PDF-1.7 current'
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url, *, params=None, headers=None):
+            return FakeDownloadResponse()
+
+    async def fake_access_token(self, client):
+        return 'token'
+
+    async def fake_list_files(self, client, token):
+        return [{'id': 'drive-current', 'name': 'op-current.pdf', 'mimeType': 'application/pdf'}]
+
+    monkeypatch.setattr('app.orders.load_supplier_master', lambda path: SUPPLIERS)
+    monkeypatch.setattr('app.orders.httpx.AsyncClient', lambda timeout=30: FakeAsyncClient())
+    monkeypatch.setattr(DriveOrderService, '_access_token', fake_access_token)
+    monkeypatch.setattr(DriveOrderService, '_list_files', fake_list_files)
+    monkeypatch.setattr('app.orders.parse_order', lambda *args, **kwargs: {
+        'source_id': 'drive-current',
+        'source_name': 'op-current.pdf',
+        'sha256': hashlib.sha256(b'current').hexdigest(),
+        'id_origen': order_origin('drive-current'),
+        'status': 'READY',
+        'reason': None,
+        'method': 'TRB',
+        'supplier': {'name': SUPPLIER.name, 'document': SUPPLIER.document, 'cbu': SUPPLIER.cbu},
+        'amount': '20.00',
+        'cheque_date': None,
+        'cheque_type': None,
+    })
+
+    service = DriveOrderService(Settings(_env_file=None, api_key='a' * 40), Path.cwd())
+    result = asyncio.run(service.sync(journal))
+
+    assert [order['source_id'] for order in result['ordenes']] == ['drive-current']
+    assert journal.get_order('drive-old') is None
 
 
 class RecordingBank:

@@ -1,5 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
+const LAST_OPERATION_KEY='credicoopLastOperation';
+const COMPANY_FCI_CBU='1910054455005400309496';
 const state = { key:'', config:null, accounts:[], beneficiaries:[], orders:[], driveOrders:[], driveOrderPreview:null, kind:'transferencia', preview:null, fciPreview:null, fciAccounts:[], fciFunds:[], movements:null, busy:false, selectedOrder:null };
 const money = (v, currency='ARS') => new Intl.NumberFormat('es-AR',{style:'currency',currency,minimumFractionDigits:2}).format(Number(v));
 const dateLabel = v => !v ? '—' : /^\d{8}$/.test(v) ? `${v.slice(6,8)}/${v.slice(4,6)}/${v.slice(0,4)}` : /^\d{4}-\d{2}-\d{2}$/.test(v) ? v.split('-').reverse().join('/') : String(v);
@@ -7,14 +9,113 @@ const normalName = v => v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replac
 const message = (text,type='neutral') => { $('notice').textContent=text; $('notice').className=`notice ${type}`; $('notice').hidden=false; };
 const newId = () => crypto.randomUUID();
 const el = (tag,text,cls) => {const x=document.createElement(tag);if(text!==undefined)x.textContent=String(text);if(cls)x.className=cls;return x;};
+function readLastOperation(){
+  try{
+    const raw=sessionStorage.getItem(LAST_OPERATION_KEY);
+    return raw?JSON.parse(raw):null;
+  }catch(_){return null;}
+}
+function rememberLastOperation(kind,idOrigen,idOperacion=''){
+  try{sessionStorage.setItem(LAST_OPERATION_KEY,JSON.stringify({kind,idOrigen:idOrigen||'',idOperacion:idOperacion||''}));}catch(_){/* ignore */}
+}
+function applyLastOperationToStatus(){
+  const last=readLastOperation();
+  if(!last)return false;
+  if(last.kind)$('status-kind').value=last.kind;
+  $('status-origin').value=last.idOrigen||'';
+  $('status-operation').value=last.idOperacion||'';
+  return Boolean(last.idOrigen||last.idOperacion);
+}
+function showBankExchanges(exchanges,status,localError=null){
+  const panel=$('exchange-log');
+  const list=$('bank-exchange-list');
+  const statusPill=$('exchange-status');
+  if(!panel||!list||!statusPill)return;
+  list.replaceChildren();
+  panel.hidden=false;statusPill.textContent=String(status);
+  if(!exchanges.length){
+    list.append(el('p',localError
+      ?localError
+      :'Esta consulta no produjo una llamada a la API del banco.'));
+    return;
+  }
+  exchanges.forEach((exchange,index)=>{
+    const request=exchange.request||{};
+    const response=exchange.response||{};
+    const method=String(request.method||'HTTP').toUpperCase();
+    const section=el('section',undefined,'bank-exchange');
+    const heading=el('div',undefined,'bank-exchange-heading');
+    const identity=el('div',undefined,'bank-exchange-identity');
+    identity.append(el('span',method,`method-badge method-${method.toLowerCase()}`),el('h4',`Intercambio bancario ${index+1}`));
+    heading.append(identity,el('span',request.url||'URL no disponible','exchange-url'));
+    const grid=el('div',undefined,'bank-exchange-grid');
+    const cards=[
+      {kind:'request',label:'Request',caption:'Enviada al banco',data:request},
+      {kind:'response',label:'Response',caption:response.status?`HTTP ${response.status}`:'Recibida del banco',data:response},
+    ];
+    cards.forEach(({kind,label,caption,data})=>{
+      const card=el('article',undefined,`exchange-card exchange-card-${kind}`);
+      const cardHeading=el('div',undefined,'exchange-card-heading');
+      cardHeading.append(el('div',label,'exchange-card-title'),el('span',caption,'exchange-card-caption'));
+      const code=el('pre');
+      code.append(el('code',JSON.stringify(data,null,2)??String(data)));
+      card.append(cardHeading,code);grid.append(card);
+    });
+    section.append(heading,grid);list.append(section);
+  });
+}
+function beneficiaryResponseRows(value,path='',rows=[]){
+  if(Array.isArray(value)){
+    if(!value.length)rows.push([path,'[]']);
+    else value.forEach((item,index)=>beneficiaryResponseRows(item,`${path}[${index}]`,rows));
+  }else if(value!==null&&typeof value==='object'){
+    const entries=Object.entries(value);
+    if(!entries.length)rows.push([path,'{}']);
+    else entries.forEach(([key,item])=>beneficiaryResponseRows(item,path?`${path}.${key}`:key,rows));
+  }else rows.push([path,value===null?'null':String(value)]);
+  return rows;
+}
+function displayBeneficiaryResponse(data){
+  const fields=$('beneficiary-response-fields');
+  fields.replaceChildren();
+  beneficiaryResponseRows(data).forEach(([field,value])=>{
+    const row=el('tr');
+    row.append(el('td',field),el('td',value));
+    fields.append(row);
+  });
+  $('beneficiary-response-json').textContent=JSON.stringify(data,null,2)??String(data);
+  $('beneficiary-response-status').textContent=`${fields.rows.length} campos recibidos`;
+  $('beneficiary-response-panel').hidden=false;
+}
 async function api(path, options={}) {
   if(!state.key)throw Error('Ingresá la clave API local y presioná Conectar.');
   const headers = {'X-API-Key':state.key, ...options.headers};
   if(options.body)headers['Content-Type']='application/json';
   let response;
-  try {response=await fetch(path,{...options,headers});}catch{throw Error('No se obtuvo respuesta del servicio local. Si estabas enviando, consultá el registro antes de repetir.');}
+  try {response=await fetch(path,{...options,headers});}catch{
+    const error='No se obtuvo respuesta del servicio local. Si estabas enviando, consultá el registro antes de repetir.';
+    showBankExchanges([],'Sin respuesta',error);throw Error(error);
+  }
   let data;
-  try{data=await response.json();}catch{throw Error('El servicio devolvió una respuesta inesperada. Si era un envío, consultá el estado antes de repetir.');}
+  try{const body=await response.text();data=body?JSON.parse(body):null;}catch{
+    const error='El servicio devolvió una respuesta inesperada. Si era un envío, consultá el estado antes de repetir.';
+    showBankExchanges([],`${response.status} ${response.statusText}`,error);throw Error(error);
+  }
+  const exchangeId=response.headers.get('X-Bank-Exchange-ID');
+  let exchanges=[];
+  let exchangeError=null;
+  if(exchangeId){
+    try{
+      const exchangeResponse=await fetch(`/intercambios-banco/${encodeURIComponent(exchangeId)}`,{headers:{'X-API-Key':state.key}});
+      const exchangeData=await exchangeResponse.json();
+      if(exchangeResponse.ok&&Array.isArray(exchangeData.intercambios))exchanges=exchangeData.intercambios;
+      else exchangeError=exchangeData.error||exchangeData.detail||`HTTP ${exchangeResponse.status}`;
+    }catch(error){exchangeError=`No se pudieron recuperar los detalles del intercambio bancario: ${error.message}`;}
+  }
+  const localError=!response.ok
+    ?`La API local rechazó la operación antes de completar una llamada al banco: ${data?.error||data?.detail||'error sin detalle'}.`
+    :exchangeError?`No se pudieron cargar los intercambios del banco: ${exchangeError}`:null;
+  showBankExchanges(exchanges,`${response.status} ${response.statusText}`,localError);
   if(!response.ok){
     const detail=data.error||data.detail||'La solicitud no se pudo completar.';
     let text=Array.isArray(detail)?detail.map(x=>`${x.loc.join('.')}: ${x.msg}`).join(' · '):String(detail);
@@ -25,28 +126,70 @@ async function api(path, options={}) {
   return data;
 }
 async function action(button, fn) {
-  const wasDisabled=button.disabled;button.disabled=true;
-  try{await fn();}catch(e){message(e.message,'error');}finally{button.disabled=wasDisabled;}
+  const wasDisabled = button.disabled; button.disabled = true;
+  try {
+    await fn();
+  } catch (e) {
+    const msg = String(e?.message || e || 'Error inesperado');
+    // If backend reports duplicate idOrigen, clear pending and generate a new one for the user
+    const low = msg.toLowerCase();
+    // Robust detection for duplicate idOrigen responses (varias redacciones posibles)
+    if ((low.includes('idorigen') && (low.includes('registr') || low.includes('ya registr'))) || low.includes('id origen ya registrado')) {
+      // remove pending and regenerate a fresh idOrigen for the user
+      sessionStorage.removeItem('credicoopPendingOrigin');
+      try{
+        const fresh = newId();
+        $('payment-origin').value = fresh;
+        // Clear any status fields showing the old origin/operation
+        if($('status-origin')) $('status-origin').value = '';
+        if($('status-operation')) $('status-operation').value = '';
+      }catch(_){/* ignore DOM errors */}
+      message('El idOrigen anterior ya estaba registrado. Se generó un nuevo idOrigen para esta sesión. Conservá el nuevo valor.', 'neutral');
+    }
+    message(msg, 'error');
+  } finally {
+    button.disabled = wasDisabled;
+  }
 }
 function clearPreview(){state.preview=null;$('payment-preview').hidden=true;$('confirm-payment').checked=false;$('send-payment').disabled=true;}
 function clearFciPreview(){state.fciPreview=null;$('fci-preview').hidden=true;$('fci-confirm').checked=false;$('fci-send').disabled=true;}
+function setChequeVisibility(visible){
+  // Ensure cheque-only fields are consistently shown/hidden and required attributes set
+  try{
+    const idsToToggle = ['cheque-type-label','cheque-date-label','cheque-character-label'];
+    idsToToggle.forEach(id=>{const el=document.getElementById(id);if(el)el.hidden=!visible;});
+    const cbuLabel = document.getElementById('cbu-label'); if(cbuLabel) cbuLabel.hidden = visible;
+    const beneficiaryCbu = document.getElementById('beneficiary-cbu'); if(beneficiaryCbu) beneficiaryCbu.required = !visible;
+    const chequeDate = document.getElementById('cheque-date'); if(chequeDate) chequeDate.required = visible;
+  }catch(e){/* non-blocking */}
+}
+
 function showView(view){
   clearPreview();
   clearFciPreview();
   document.querySelectorAll('.view').forEach(x=>x.hidden=true);
   document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===view));
-  const titles={cuentas:'Cuentas y saldos',movimientos:'Movimientos',transferencias:'Transferencias',echeqs:'eCheqs',ordenes:'Órdenes de pago PDF',proveedores:'Preparación de pagos',seguimiento:'Seguimiento',fci:'Fondos comunes de inversión'};
+  const titles={cuentas:'Cuentas y saldos',movimientos:'Movimientos',transferencias:'Transferencias',echeqs:'eCheqs',proveedores:'Preparación de pagos',seguimiento:'Seguimiento',fci:'Fondos comunes de inversión'};
   $('page-title').textContent=titles[view];
-  if(view==='transferencias'||view==='echeqs'){
-    const oldKind=state.kind;
-    state.kind=view==='transferencias'?'transferencia':'echeq';$('view-pago').hidden=false;
-    if(oldKind!==state.kind){$('beneficiary-name').value='';$('beneficiary-document').value='';$('beneficiary-cbu').value='';}
-    const cheque=state.kind==='echeq';$('payment-heading').textContent=cheque?'Preparar eCheq':'Preparar transferencia';
-    ['cheque-type-label','cheque-date-label','cheque-character-label'].forEach(id=>$(id).hidden=!cheque);
-    $('cbu-label').hidden=cheque;$('beneficiary-cbu').required=!cheque;$('cheque-date').required=cheque;
-    populateBeneficiaries();
-    $('test-order-note').hidden=!state.selectedOrder;
+  if(view==='transferencias'){
+    // Show payment form for transfers
+    const oldKind=state.kind; state.kind='transferencia'; $('view-pago').hidden=false;
+    if(oldKind!==state.kind){$('beneficiary-name').value='';$('beneficiary-document').value='';$('beneficiary-cbu').value='';$('beneficiary-response-panel').hidden=true;}
+    $('payment-heading').textContent='Preparar transferencia';
+    setChequeVisibility(false); populateBeneficiaries(); $('test-order-note').hidden=!state.selectedOrder;
+  }else if(view==='echeqs'){
+    // Show eCheq listing/management view
+    $('view-echeqs').hidden=false; populateEcheqCbus();
   }else{$(`view-${view}`).hidden=false;}
+}
+
+// Show payment form for a given kind without overriding navigation intent
+function showPayment(kind){
+  clearPreview(); clearFciPreview(); document.querySelectorAll('.view').forEach(x=>x.hidden=true);
+  // mark transferencias nav active because payment form is under that view
+  document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view==='transferencias'));
+  state.kind = kind; $('view-pago').hidden = false; $('payment-heading').textContent = (kind==='echeq'?'Preparar eCheq':'Preparar transferencia');
+  setChequeVisibility(kind==='echeq'); populateBeneficiaries(); $('test-order-note').hidden = !state.selectedOrder;
 }
 function populateBeneficiaries(){
   const list=$('test-beneficiary');list.replaceChildren(el('option','Elegir beneficiario de prueba'));list.firstChild.value='';
@@ -103,8 +246,9 @@ async function loadFciData(){
     api('/fci/cuentas-comitentes'),api('/fci/fondos')
   ]);
   const accountData=accountsResponse.data,fundData=fundsResponse.data;
-  if(!Array.isArray(accountData?.cuentasComitentes)||!Array.isArray(accountData?.cuentasVinculadas))
-    throw Error('La respuesta FCI no contiene cuentas comitentes y vinculadas válidas.');
+  if(!Array.isArray(accountData?.cuentasComitentes))
+    throw Error('La respuesta FCI no contiene una lista válida de cuentas comitentes.');
+  const linkedAccounts=Array.isArray(accountData?.cuentasVinculadas)?accountData.cuentasVinculadas:[];
   if(!Array.isArray(fundData?.detalleFondo))throw Error('La respuesta FCI no contiene una lista de fondos válida.');
   state.fciAccounts=accountData.cuentasComitentes;state.fciFunds=fundData.detalleFondo;
   populateFciInputs();
@@ -113,11 +257,15 @@ async function loadFciData(){
   state.fciAccounts.forEach(a=>{
     const row=el('tr');[a.tipoCuenta,a.sucursalCuenta,a.numeroCuenta].forEach(v=>row.append(el('td',v)));accountsBody.append(row);
   });
-  const linked=accountData.cuentasVinculadas.map(x=>x.cbu).filter(Boolean);
+  const linked=linkedAccounts.map(x=>x.cbu).filter(Boolean);
+  const effectiveLinked=linked.length?linked:[COMPANY_FCI_CBU];
   const cbuSelect=$('fci-cbu'),prior=cbuSelect.value;cbuSelect.replaceChildren();
-  linked.forEach(cbu=>{const option=el('option',cbu);option.value=cbu;cbuSelect.append(option);});
+  effectiveLinked.forEach(cbu=>{const option=el('option',cbu);option.value=cbu;cbuSelect.append(option);});
   if([...cbuSelect.options].some(x=>x.value===prior))cbuSelect.value=prior;
-  $('fci-linked-cbus').textContent=`CBU vinculados para débito/crédito: ${linked.join(' · ')||'ninguno informado'}`;
+  const linkedLabel=effectiveLinked.join(' · ');
+  $('fci-linked-cbus').textContent=accountData?.avisoCbuVinculado
+    ?`CBU vinculados para débito/crédito: ${linkedLabel}. ${accountData.avisoCbuVinculado}`
+    :`CBU vinculados para débito/crédito: ${linkedLabel}`;
   const fundsBody=$('fci-funds-body');fundsBody.replaceChildren();
   state.fciFunds.forEach(f=>{
     const row=el('tr');
@@ -171,6 +319,9 @@ async function submitFci(){
     $('fci-operation-state').textContent=response.respuesta_banco?.data?.estadoOperacion?.descripcion||'Respuesta recibida';
     $('fci-result').hidden=false;
     const id=response.respuesta_banco?.data?.idOperacion;if(id)$('fci-status-id').value=String(id);
+    // Clear pending idOrigen on successful response
+    try{ sessionStorage.removeItem('credicoopPendingOrigin'); $('payment-origin').value = newId(); $('status-origin').value = ''; }catch(_){ }
+    maybeClearPendingOrigin(response);
     message(`${state.config.simulacion?'Operación FCI simulada':'Operación FCI enviada a firma'}. Conservá el idOrigen ${pending.body.idOrigen} y completá la firma en BIE.`, 'success');
     clearFciPreview();
   }catch(e){
@@ -268,8 +419,11 @@ async function transmitDriveOrder(){
     const response=await api(`/ordenes-pago/${encodeURIComponent(pending.sourceId)}/enviar`,{
       method:'POST',body:JSON.stringify({cbuCuentaDebito:pending.cbu})
     });
-    $('status-operation').value=String(response.respuesta_banco?.data?.idOperacion||'');
-    showOperation(response);clearDriveOrderPreview();await loadDriveOrders();
+    const idOperacion=String(response.respuesta_banco?.data?.idOperacion||'');
+    $('status-operation').value=idOperacion;
+    rememberLastOperation(kind,payload.idOrigen,idOperacion);
+    try{ sessionStorage.removeItem('credicoopPendingOrigin'); $('payment-origin').value = newId(); }catch(_){ }
+    showOperation(response);maybeClearPendingOrigin(response);clearDriveOrderPreview();await loadDriveOrders();
     message(`${state.config.simulacion?'Operación simulada':'Orden enviada a firma'} para ${item.nombre||item.beneficiarioNombre}. Consultá su estado y completá la firma en BIE.`, 'success');
   }catch(error){
     clearDriveOrderPreview();
@@ -279,7 +433,9 @@ async function transmitDriveOrder(){
 }
 function prepareOrder(order,kind){
   if(!state.config?.homologacion){message('Las órdenes de ejemplo sólo se usan en homologación.','error');return;}
-  state.selectedOrder=order;newInstruction(true);showView(kind==='echeq'?'echeqs':'transferencias');
+  state.selectedOrder=order;newInstruction(true); 
+  // For eCheq orders, open the payment form pre-configured for eCheq; for transfer, open transfer payment
+  if(kind==='echeq'){ showPayment('echeq'); } else { showView('transferencias'); }
   $('test-order-note').textContent=`Prueba de la orden ${order.orden}. Proveedor original: ${order.proveedorOriginal}. Importe original: ${money(order.importeOriginal)}. Elegí un beneficiario de homologación; esta instrucción no modifica la orden ni la planilla original.`;
   $('test-order-note').hidden=false;$('payment-amount').value='15.79';
   // Usar exclusivamente el calendario operativo del banco para este ejemplo.
@@ -292,7 +448,16 @@ function resetChequeDate(){
   else{const next=new Date(d+'T00:00:00Z');next.setUTCDate(next.getUTCDate()+7);$('cheque-date').value=next.toISOString().slice(0,10);}
 }
 function newInstruction(fromOrder=false){
-  clearPreview();$('payment-origin').value=newId();sessionStorage.removeItem('credicoopPendingOrigin');
+  clearPreview();
+  // Preserve a pending idOrigen while the previous operation is unresolved.
+  const pending = sessionStorage.getItem('credicoopPendingOrigin');
+  if(pending){
+    // Keep the pending origin and warn the user instead of generating a new one.
+    $('payment-origin').value = pending; 
+    message('Hay un idOrigen pendiente para esta sesión. Consultá su estado antes de generar uno nuevo.','neutral');
+  }else{
+    $('payment-origin').value = newId();
+  }
   $('beneficiary-name').value='';$('beneficiary-document').value='';$('beneficiary-cbu').value='';
   $('test-beneficiary').value='';$('payment-amount').value='15.79';
   if(!fromOrder){state.selectedOrder=null;$('test-order-note').hidden=true;}
@@ -327,6 +492,18 @@ async function previewPayment(){
   state.preview={body,snapshot:JSON.stringify(body),kind:state.kind,path:paymentPath(),payload:result.payload_banco};renderPreview(result.payload_banco);
   message('Vista previa validada. Todavía no se envió la operación al banco.','success');
 }
+
+// Auto-clear pending idOrigen when bank confirms an idOperacion (sent to firma)
+function maybeClearPendingOrigin(response){
+  try{
+    const idOp = response?.respuesta_banco?.data?.idOperacion || response?.idOperacion || null;
+    if(idOp){
+      sessionStorage.removeItem('credicoopPendingOrigin');
+      $('payment-origin').value = newId();
+    }
+  }catch(e){/* non-blocking */}
+}
+
 async function transmit(){
   const p=state.preview;
   if(!p||p.kind!==state.kind||JSON.stringify(buildPayment())!==p.snapshot)throw Error('Los datos cambiaron. Generá y revisá una nueva vista previa.');
@@ -336,8 +513,11 @@ async function transmit(){
   $('status-origin').value=p.body.idOrigen;$('status-kind').value=p.kind;$('status-operation').value='';
   try{
     const response=await api(p.path,{method:'POST',body:JSON.stringify(p.body)});
-    $('status-operation').value=String(response.respuesta_banco?.data?.idOperacion||'');
-    showOperation(response);showView('seguimiento');
+    const idOperacion=String(response.respuesta_banco?.data?.idOperacion||'');
+    $('status-operation').value=idOperacion;
+    rememberLastOperation(p.kind,p.body.idOrigen,idOperacion);
+    try{ sessionStorage.removeItem('credicoopPendingOrigin'); $('payment-origin').value = newId(); }catch(_){ }
+    showOperation(response);maybeClearPendingOrigin(response);showView('seguimiento');
     const status=response.respuesta_banco?.data?.estadoOperacion?.descripcion||'Respuesta recibida';
     message(`${state.config.simulacion?'Respuesta simulada':'Respuesta del banco'}: ${status}. ${state.config.simulacion?'Esta demostración no envía instrucciones al banco.':'Consultá el estado y completá firma y activación en BIE.'}`,status.toLowerCase().includes('rechaz')?'error':'success');
   }catch(e){
@@ -354,7 +534,7 @@ document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{
     if(b.dataset.view==='transferencias'||b.dataset.view==='echeqs')state.selectedOrder=null;
     showView(b.dataset.view);
     if(b.dataset.view==='fci'&&state.key&&!state.fciAccounts.length)action($('refresh-fci'),loadFciData);
-    if(b.dataset.view==='ordenes'&&state.key&&!state.config?.simulacion)action($('sync-drive-orders'),()=>loadDriveOrders());
+    if(b.dataset.view==='proveedores'&&state.key&&!state.config?.simulacion)action($('sync-drive-orders'),()=>loadDriveOrders());
   }
 });
 $('connect').onclick=()=>action($('connect'),async()=>{
@@ -363,11 +543,13 @@ $('connect').onclick=()=>action($('connect'),async()=>{
   $('connection-status').textContent=`Adherente ${state.config.adherente}`;
   $('movement-start').value=state.config.fecha_operativa_banco.slice(0,8)+'01';resetChequeDate();
   state.beneficiaries=[];state.orders=[];
-  if(state.config.homologacion){state.beneficiaries=(await api('/homologacion/beneficiarios')).beneficiarios;await loadOrders();}
+  if(state.config.homologacion)state.beneficiaries=(await api('/homologacion/beneficiarios')).beneficiarios;
   populateBeneficiaries();
   await loadAccounts();message(`${state.config.simulacion?'Demostración con respuestas simuladas. No se contacta al banco.':'Conectado.'} Fecha operativa: ${dateLabel(state.config.fecha_operativa_banco)}.`, 'success');
 });
 $('sync-drive-orders').onclick=()=>action($('sync-drive-orders'),()=>loadDriveOrders(true));
+// Echeq UI: new issuance button
+$('echeq-new-issuance')?.addEventListener('click',()=>{ newInstruction(true); showPayment('echeq'); });
 $('drive-debit-account').onchange=clearDriveOrderPreview;
 $('drive-order-confirm').onchange=()=>$('drive-order-send').disabled=!state.driveOrderPreview||!$('drive-order-confirm').checked||state.busy;
 $('drive-order-send').onclick=()=>{
@@ -440,7 +622,6 @@ $('fci-local-status').onclick=()=>action($('fci-local-status'),async()=>{
   $('fci-operation-state').textContent=result.estado||'Registro local';$('fci-result').hidden=false;
 });
 $('refresh-accounts').onclick=()=>action($('refresh-accounts'),loadAccounts);
-$('refresh-orders').onclick=()=>action($('refresh-orders'),loadOrders);
 $('homo-dates').onclick=()=>{if(!state.config){message('Conectá el servicio para conocer la fecha operativa.','error');return;}$('movement-start').value=state.config.fecha_operativa_banco.slice(0,8)+'01';$('movement-end').value=state.config.fecha_operativa_banco;};
 $('movement-form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
   const params=new URLSearchParams({fecha_desde:$('movement-start').value});if($('movement-end').value)params.set('fecha_hasta',$('movement-end').value);
@@ -457,12 +638,19 @@ $('movement-form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
 $('download-movements').onclick=()=>{if(!state.movements)return;const blob=new Blob([JSON.stringify(state.movements,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=el('a');a.href=url;a.download='movimientos.json';a.click();URL.revokeObjectURL(url);};
 $('test-beneficiary').onchange=()=>{
   const b=state.beneficiaries.find(x=>x.tipo===state.kind&&x.documento+'|'+x.cbuCvu===$('test-beneficiary').value);
+  $('beneficiary-response-panel').hidden=true;
   if(!b)return;$('beneficiary-name').value=normalName(b.nombre);$('beneficiary-document').value=b.documento;$('beneficiary-cbu').value=b.cbuCvu||'';clearPreview();
 };
+$('beneficiary-document').addEventListener('input',()=>$('beneficiary-response-panel').hidden=true);
+$('beneficiary-cbu').addEventListener('input',()=>$('beneficiary-response-panel').hidden=true);
 $('validate-beneficiary').onclick=()=>action($('validate-beneficiary'),async()=>{
-  const params=new URLSearchParams(state.kind==='transferencia'?{cbu_cvu:$('beneficiary-cbu').value}:{documento:$('beneficiary-document').value,documento_tipo:'CUIT'});
+  const document=$('beneficiary-document').value.trim(),cbu=$('beneficiary-cbu').value.trim();
+  if(state.kind==='echeq'&&!/^\d{11}$/.test(document))throw Error('Ingresá un CUIT, CUIL o CDI de 11 dígitos para consultar el beneficiario de eCheq.');
+  if(state.kind==='transferencia'&&!/^\d{22}$/.test(cbu))throw Error('Ingresá un CBU o CVU de 22 dígitos para consultar el beneficiario de transferencia.');
+  $('beneficiary-response-panel').hidden=true;
+  const params=new URLSearchParams(state.kind==='transferencia'?{cbu_cvu:cbu}:{documento:document,documento_tipo:'CUIT'});
   const path=state.kind==='transferencia'?'/beneficiarios/transferencias':'/beneficiarios/echeqs';
-  const data=await api(path+'?'+params);$('beneficiary-status').textContent='Respuesta del banco: '+JSON.stringify(data);message('Consulta de beneficiario recibida. Verificá que los datos y el estado permitan operar.','neutral');
+  const data=await api(path+'?'+params);displayBeneficiaryResponse(data);$('beneficiary-status').textContent='Consulta recibida; revisá todos los datos devueltos abajo.';message('Consulta de beneficiario recibida. Verificá que los datos y el estado permitan operar.','neutral');
 });
 $('cheque-type').onchange=()=>{resetChequeDate();clearPreview();};
 $('payment-form').addEventListener('input',clearPreview);$('payment-form').addEventListener('change',clearPreview);
@@ -478,10 +666,110 @@ $('cancel-send').onclick=()=>$('send-dialog').close();$('confirm-send').onclick=
 $('status-form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
   const kind=$('status-kind').value,params=new URLSearchParams(),op=$('status-operation').value.trim(),origin=$('status-origin').value.trim();
   if(op)params.set('id_operacion',op);if(kind==='transferencia'&&origin)params.set('id_origen',origin);
-  if(!op&&(!origin||kind==='echeq'))throw Error(kind==='echeq'?'Para consultar eCheq al banco necesitás idOperacion. Si se perdió la respuesta, revisá el registro local y BIE.':'Ingresá idOperacion o idOrigen.');
+  if(!op&&(!origin||kind==='echeq'))throw Error(kind==='echeq'?'Para consultar eCheq al banco necesitás idOperacion. Si se perdió la respuesta, usá "Consultar último envío" o revisá el registro local y BIE.':'Ingresá idOperacion o idOrigen.');
   showOperation(await api((kind==='transferencia'?'/transferencias/estado':'/echeqs/estado')+'?'+params));
 });};
+$('status-last-operation').onclick=()=>action($('status-last-operation'),async()=>{
+  if(!applyLastOperationToStatus())throw Error('No hay un envío reciente guardado en esta sesión.');
+  showView('seguimiento');
+  const kind=$('status-kind').value,op=$('status-operation').value.trim(),origin=$('status-origin').value.trim();
+  if(kind==='echeq'&&!op){
+    showOperation(await api(`/operaciones/echeq/${encodeURIComponent(origin)}`));
+    message('Se mostró el registro local del último eCheq. Para consultar al banco todavía necesitás el idOperacion.','neutral');
+    return;
+  }
+  const params=new URLSearchParams();
+  if(op)params.set('id_operacion',op);
+  if(kind==='transferencia'&&origin)params.set('id_origen',origin);
+  showOperation(await api((kind==='transferencia'?'/transferencias/estado':'/echeqs/estado')+'?'+params));
+});
 $('local-status').onclick=()=>action($('local-status'),async()=>{const origin=$('status-origin').value.trim();if(!origin)throw Error('Ingresá idOrigen.');showOperation(await api(`/operaciones/${$('status-kind').value}/${encodeURIComponent(origin)}`));});
+// --- eCheq listing and management UI handlers ---
+async function echeqListSubmit(e){
+  if(e) e.preventDefault();
+  const filtro = { gestion: $('echeq-gestion').value, estado: $('echeq-estado').value, pagina: Number($('echeq-pagina').value)||1, limite: Number($('echeq-limite').value)||20 };
+  const cuit = $('echeq-cuit').value.trim(); if(cuit) filtro.cuitCuilCdi = cuit.replace(/-/g,'');
+  const desde = $('echeq-fecha-desde').value; if(desde) filtro.fechaPagoDesde = desde.replace(/-/g,'');
+  const hasta = $('echeq-fecha-hasta').value; if(hasta) filtro.fechaPagoHasta = hasta.replace(/-/g,'');
+  const payload = { idOrigen: newId(), filtro };
+  const result = await api('/echeqs/lista',{method:'POST',body:JSON.stringify(payload)});
+  $('echeq-list-json').textContent = JSON.stringify(result,null,2);
+  $('echeq-list-result').hidden = false;
+  // Try to render a sensible table if present
+  const rows = result.data?.cheques || result.listaCheques || result.data?.listaCheques || result.data?.detalle || result.data?.resultado || null;
+  const body = $('echeq-list-body'); body.replaceChildren();
+  let count = 0;
+  if(Array.isArray(rows)){
+    rows.forEach(r=>{
+      const row = el('tr');
+      row.append(el('td',r.idCheque||r.id||'—'),el('td',r.numeroCheque||r.numero||'—'),el('td',r.monto||r.montoPago||'—'),el('td',r.fechaPago||r.fecha||'—'),el('td',r.estado||r.estadoOperacion||'—'));
+      body.append(row);count++;
+    });
+  }
+  $('echeq-list-count').textContent = count?`${count} eCheq(s)`:'Sin lista tabular. Revisa el JSON';
+}
+
+function populateEcheqCbus(){
+  const select = $('manage-cbu'); if(!select) return; select.replaceChildren();
+  const empty = el('option','Elegir CBU'); empty.value=''; select.append(empty);
+  state.accounts.forEach(a=>{const cbu=a.CBU||a.cbu||''; if(a.moneda==='ARS' && /^\d{22}$/.test(cbu)){const o=el('option',`${a.nroCuenta} · ${cbu}`); o.value=cbu; select.append(o);}});
+}
+
+$('echeq-list-form')?.addEventListener('submit',e=>action($('echeq-list-button'),()=>echeqListSubmit(e)));
+
+// Consultar emisión (idOperacion)
+$('echeq-emision-button')?.addEventListener('click',()=>action($('echeq-emision-button'),async()=>{
+  const id = $('echeq-emision-id')?.value.trim(); if(!id) throw Error('Ingresá idOperacion para consultar emisión.');
+  const result = await api(`/echeqs/estado?id_operacion=${encodeURIComponent(id)}`);
+  $('echeq-emision-json').textContent = JSON.stringify(result,null,2);
+  $('echeq-emision-json').scrollTop = 0;
+  // Optionally open the management form if response includes cheque identifiers
+  try{
+    const data = result.respuesta_banco?.data || result.data || result;
+    const cheque = Array.isArray(data.cheques)?data.cheques[0]:(Array.isArray(data.echeqs)?data.echeqs[0]:null);
+    if(cheque){
+      const idCheque = cheque.idCheque || cheque.id || '';
+      const cmc7 = cheque.cmc7 || cheque.cmc || '';
+      if(idCheque) $('manage-idCheque').value = idCheque;
+      if(cmc7) $('manage-cmc7').value = cmc7;
+      if(cheque.cbuDestino && $('manage-cbu')){
+        // try to select CBU if present in accounts
+        const cbus = [...(document.getElementById('manage-cbu')?.options||[])].map(o=>o.value);
+        if(cbus.includes(cheque.cbuDestino)) document.getElementById('manage-cbu').value = cheque.cbuDestino;
+      }
+      $('echeq-management').hidden = false;
+    }
+  }catch(e){/* ignore */}
+}));
+$('echeq-refresh')?.addEventListener('click',()=>{$('echeq-list-json').textContent='';$('echeq-list-result').hidden=true;$('echeq-list-body').replaceChildren();$('echeq-list-count').textContent='Sin consulta';});
+
+$('echeq-preview-button')?.addEventListener('click',()=>action($('echeq-preview-button'),async()=>{
+  const idCheque = $('manage-idCheque').value.trim(); const cmc7 = $('manage-cmc7').value.trim();
+  if(!idCheque && !cmc7) throw Error('Informá idCheque o cmc7 para gestionar.');
+  const cbu = $('manage-cbu').value.trim(); if(!/^[0-9]{22}$/.test(cbu)) throw Error('Seleccioná un CBU destino válido.');
+  const accion = $('manage-accion').value; const body = { idOrigen: newId(), cbuCuenta: cbu, operadoresFirmantes: [], accion, echeqs: [{ idCheque: idCheque||undefined, cmc7: cmc7||undefined }] };
+  if(accion==='DEPOSITAR'){ const monto = $('manage-monto').value.trim(); const fecha = $('manage-fecha').value; if(!monto||!fecha) throw Error('DEPOSITAR requiere monto y fecha.'); body.echeqs[0].monto = monto.replace(',','.'); body.echeqs[0].fechaPago = fecha.replace(/-/g,''); }
+  if(accion==='ENDOSAR'){ body.tipoEndoso = $('manage-tipoendoso').value; const doc = $('manage-benef-doc').value.trim(); if(!doc) throw Error('ENDOSAR requiere beneficiario.'); body.beneficiario = { documento: doc, documentoTipo: 'CUIT' }; }
+  const result = await api('/echeqs/gestion/previsualizar',{method:'POST',body:JSON.stringify(body)});
+  $('echeq-management-json').textContent = JSON.stringify(result,null,2);$('echeq-management-preview').hidden=false; $('echeq-send-button').disabled=false;
+  // store pending payload for send
+  state.echeqManagementPending = { body, path: '/echeqs/gestion' };
+}));
+
+$('echeq-send-button')?.addEventListener('click',()=>action($('echeq-send-button'),async()=>{
+  const pending = state.echeqManagementPending; if(!pending) throw Error('No hay previsualización.');
+  const response = await api(pending.path,{method:'POST',body:JSON.stringify(pending.body)});
+  $('echeq-management-json').textContent = JSON.stringify(response,null,2);
+  message('Gestión enviada. Consultá el estado y completá firma si corresponde.','success');
+  maybeClearPendingOrigin(response);
+  $('echeq-send-button').disabled = true; $('echeq-management-preview').hidden=false; $('echeq-management').hidden=false;
+}));
+
+// populate CBU select when accounts load
+const origPopulateAccounts = populateAccounts; populateAccounts = function(){ origPopulateAccounts(); populateEcheqCbus(); };
+
+// initialize defaults
 $('payment-origin').value=sessionStorage.getItem('credicoopPendingOrigin')||newId();
- $('fci-origin').value=newId();$('fci-kind').dispatchEvent(new Event('change'));
+$('fci-origin').value=newId();$('fci-kind').dispatchEvent(new Event('change'));
 if(sessionStorage.getItem('credicoopPendingOrigin')){$('status-origin').value=$('payment-origin').value;message('Hay un envío anterior en esta sesión. Consultá su registro local y el banco antes de repetir.','neutral');}
+else if(readLastOperation()){applyLastOperationToStatus();}

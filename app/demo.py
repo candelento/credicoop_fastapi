@@ -46,7 +46,7 @@ def create_demo_app():
         if route.endswith('/cuentas-comitentes'):
             return httpx.Response(200, json={'data': {'estadoTestInversor': 'Vigente', 'perfilInversor': 'MODERADO',
                 'cuentasComitentes': [{'tipoCuenta': 'ORDI', 'sucursalCuenta': '119', 'numeroCuenta': '011123/9'}],
-                'cuentasVinculadas': [{'cbu': '1910000000000000000000'}]}, 'simulacion': True})
+                'cuentasVinculadas': []}, 'simulacion': True})
         if route.endswith('/fondos'):
             return httpx.Response(200, json={'data': {'detalleFondo': [
                 {'codigo': 'FCAD', 'nombre': '1810 AHORRO DEMO', 'moneda': 'ARS',

@@ -1,5 +1,6 @@
 import secrets
 import json
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -9,12 +10,15 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
-from .client import BankError, CredicoopClient
+from .client import BANK_EXCHANGES, BankError, CredicoopClient
 from .config import Settings, argentina_today
 from .journal import DuplicateInstruction, Journal
 from .models import (
-    EcheqRequest, FCI_SIGNER_DNI, FciMovementsRequest, FciPositionRequest, FciRedemptionRequest,
-    FciSubscriptionRequest, OrderDebitAccount, TransferRequest, fci_instruction_payload, instruction_payload,
+    EcheqBeneficiaryRegistrationRequest, EcheqListRequest, EcheqManagementRequest, EcheqRequest,
+    FCI_COMPANY_CBU, FCI_SIGNER_DNI, FciMovementsRequest, FciPositionRequest, FciRedemptionRequest,
+    FciSubscriptionRequest, OrderDebitAccount, TransferBeneficiaryRegistrationRequest, TransferRequest,
+    beneficiary_registration_payload, echeq_list_payload, echeq_management_payload,
+    fci_instruction_payload, instruction_payload,
 )
 from .orders import DriveOrderError, DriveOrderService, OrderParseError, SupplierMasterError, build_order_instruction
 
@@ -35,6 +39,24 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
     app = FastAPI(title='Credicoop — operaciones con firma en BIE', version='1.2.0', lifespan=lifespan,
         description='Consultas de cuentas, movimientos y FCI. Transferencias, eCheqs, suscripciones y rescates se envían a la firma; la autorización y activación se realizan en Banca Internet Empresa.')
 
+    app.state.bank_exchanges = OrderedDict()
+
+    @app.middleware('http')
+    async def collect_bank_exchanges(request: Request, call_next):
+        exchanges: list[dict] = []
+        token = BANK_EXCHANGES.set(exchanges)
+        try:
+            response = await call_next(request)
+        finally:
+            BANK_EXCHANGES.reset(token)
+        if exchanges:
+            exchange_id = uuid4().hex
+            app.state.bank_exchanges[exchange_id] = exchanges
+            while len(app.state.bank_exchanges) > 100:
+                app.state.bank_exchanges.popitem(last=False)
+            response.headers['X-Bank-Exchange-ID'] = exchange_id
+        return response
+
     async def authorized(key: Annotated[str | None, Security(api_key_header)]):
         if not key or not secrets.compare_digest(key, cfg.api_key.get_secret_value()):
             raise HTTPException(401, 'Clave local X-API-Key inválida o ausente.')
@@ -42,6 +64,28 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
     def fci_scope_enabled():
         if 'fciConFirma' not in cfg.scopes.split():
             raise HTTPException(503, 'Falta el scope fciConFirma en CREDICOOP_SCOPES. Confirmá antes con el banco que el adherente esté habilitado.')
+
+    def scope_enabled(scope: str):
+        if scope not in cfg.scopes.split():
+            raise HTTPException(503, f'Falta el scope {scope} en CREDICOOP_SCOPES.')
+
+    def normalize_fci_accounts(payload: dict):
+        data = payload.get('data') if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return payload
+        linked = data.get('cuentasVinculadas')
+        normalized = []
+        if isinstance(linked, list):
+            normalized = [item for item in linked if isinstance(item, dict) and str(item.get('cbu') or '').strip()]
+        if normalized:
+            data['cuentasVinculadas'] = normalized
+            return payload
+        data['cuentasVinculadas'] = [{'cbu': FCI_COMPANY_CBU, 'origen': 'empresa'}]
+        data['avisoCbuVinculado'] = (
+            'El banco no informó CBU vinculados; se asoció en forma local el CBU de la empresa '
+            f'{FCI_COMPANY_CBU} para débito/crédito en FCI.'
+        )
+        return payload
 
     def bank(request: Request):
         return request.app.state.bank
@@ -103,6 +147,13 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
                 'fci_firmante_dni': FCI_SIGNER_DNI,
                 'movimientos_hasta_predeterminado': 'fecha actual de Argentina'}
 
+    @app.get('/intercambios-banco/{exchange_id}', dependencies=auth)
+    async def bank_exchanges(exchange_id: str, request: Request):
+        exchanges = request.app.state.bank_exchanges.get(exchange_id)
+        if exchanges is None:
+            raise HTTPException(404, 'No hay request/response bancaria disponible para esta consulta.')
+        return {'intercambios': exchanges}
+
     @app.get('/cuentas', dependencies=auth)
     async def accounts(b: CredicoopClient = Depends(bank)):
         return await b.accounts()
@@ -118,6 +169,41 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
                 return account
         raise HTTPException(404, 'Cuenta no encontrada entre las habilitadas por el banco.')
 
+    @app.get('/cuentas/{nro_cuenta}/habilitacion-echeq', dependencies=auth)
+    async def echeq_enablement(nro_cuenta: str, b: CredicoopClient = Depends(bank)):
+        """Intento heurístico de detectar si una cuenta de débito está habilitada para emitir eCheq.
+        Busca claves frecuentes en la respuesta de /cuentas y devuelve un diagnóstico útil.
+        """
+        data = await b.accounts()
+        accounts = data.get('clarifCuentas', data.get('clarifcuentas'))
+        if not isinstance(accounts, list):
+            raise BankError('Formato de lista de cuentas inesperado.')
+        account = next((a for a in accounts if str(a.get('nroCuenta')) == nro_cuenta), None)
+        if account is None:
+            raise HTTPException(404, 'Cuenta no encontrada entre las habilitadas por el banco.')
+        # Heurística: buscar claves que indiquen habilitación para emisión de eCheq
+        keys = ['habilitaEcheq','habilitaEmision','puedeEmitir','permiteEmision','habilitadoEcheq','emitirEcheq','habilitado']
+        found = {}
+        for k in keys:
+            if k in account:
+                found[k] = account[k]
+        # Buscar en estructuras anidadas comunes
+        nested_candidates = {}
+        for k,v in account.items():
+            if isinstance(v, dict):
+                for subk, subv in v.items():
+                    if any(token in subk.lower() for token in ('echeq','emit','emision','habilit')):
+                        nested_candidates[f"{k}.{subk}"] = subv
+        # Respuesta
+        diagnosis = {
+            'nroCuenta': nro_cuenta,
+            'detected_flags': found,
+            'detected_nested': nested_candidates,
+            'account_raw': account,
+            'note': 'Si no se detecta una bandera explícita, la habilitación debe verificarse con Crecer/Coelsa o con el banco.'
+        }
+        return diagnosis
+
     @app.get('/cuentas/{nro_cuenta}/movimientos', dependencies=auth)
     async def movements(nro_cuenta: str, fecha_desde: date, fecha_hasta: date | None = None,
                         cod_operativo: str | None = None, b: CredicoopClient = Depends(bank)):
@@ -129,8 +215,10 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
         if cfg.fecha_operativa and end > cfg.fecha_operativa:
-            result['aviso_homologacion'] = ('El rango llega más allá de la fecha operativa fija del banco. '
-                'Para pruebas hasta el 28/08/2026, indicar fecha_hasta explícitamente; revisar si el banco cambió la fecha.')
+            result['aviso_homologacion'] = (
+                f'El rango supera la fecha operativa configurada ({cfg.fecha_operativa.isoformat()}); '
+                'confirmar con el banco que la fecha siga vigente.'
+            )
         return result
 
     def prepare(instruction):
@@ -162,7 +250,7 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
     async def payment_orders(request: Request):
         if demo:
             raise HTTPException(404, 'La importación real de Drive no está habilitada en modo demostración.')
-        return {'ordenes': request.app.state.journal.list_orders()}
+        return await request.app.state.drive_orders.sync(request.app.state.journal)
 
     @app.post('/ordenes-pago/sincronizar', dependencies=auth)
     async def sync_payment_orders(request: Request):
@@ -246,6 +334,30 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
         return {'idOrigen': instruction.idOrigen, 'modalidad': 'ConFirma', 'respuesta_banco': response,
                 'siguiente_paso': 'Consultar el estado y completar firma y activación en Banca Internet Empresa.'}
 
+    async def submit_mutation(kind, id_origen, payload, bank_path, request, b):
+        journal = request.app.state.journal
+        journal.reserve(kind, payload)
+        try:
+            response = await b.request('POST', bank_path, body=payload)
+        except BankError as exc:
+            journal.finish(
+                kind, id_origen, 'RESULTADO_INCIERTO' if exc.ambiguous else 'ERROR',
+                {'error': str(exc), 'detalle_banco': exc.details},
+            )
+            raise
+        except BaseException:
+            journal.finish(
+                kind, id_origen, 'RESULTADO_INCIERTO',
+                {'error': 'Envío interrumpido; consultar al banco antes de volver a intentar.'},
+            )
+            raise
+        journal.finish(kind, id_origen, 'RESPUESTA_RECIBIDA', response)
+        return {
+            'idOrigen': id_origen,
+            'modalidad': 'ConFirma' if '/ConFirma/' in bank_path else 'Agenda',
+            'respuesta_banco': response,
+        }
+
     @app.post('/transferencias', dependencies=auth)
     async def transfer(instruction: TransferRequest, request: Request, b: CredicoopClient = Depends(bank)):
         return await submit('transferencia', instruction, request, b)
@@ -253,6 +365,33 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
     @app.post('/echeqs', dependencies=auth)
     async def echeq(instruction: EcheqRequest, request: Request, b: CredicoopClient = Depends(bank)):
         return await submit('echeq', instruction, request, b)
+
+    def prepare_echeq_management(instruction: EcheqManagementRequest):
+        try:
+            return echeq_management_payload(instruction, cfg.adherente)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @app.post('/echeqs/lista', dependencies=auth)
+    async def echeq_list(instruction: EcheqListRequest, b: CredicoopClient = Depends(bank)):
+        payload = echeq_list_payload(instruction, cfg.adherente)
+        return await b.request('POST', '/api/echeq/v1/lista-cheques', body=payload)
+
+    @app.post('/echeqs/gestion/previsualizar', dependencies=auth)
+    async def echeq_management_preview(instruction: EcheqManagementRequest):
+        return {'enviada': False, 'payload_banco': prepare_echeq_management(instruction)}
+
+    @app.post('/echeqs/gestion', dependencies=auth)
+    async def echeq_management(
+        instruction: EcheqManagementRequest,
+        request: Request,
+        b: CredicoopClient = Depends(bank),
+    ):
+        payload = prepare_echeq_management(instruction)
+        return await submit_mutation(
+            'echeq_gestion', instruction.idOrigen, payload,
+            '/api/echeq/v1/ConFirma/gestion', request, b,
+        )
 
     async def submit_fci(kind, instruction, request, b):
         path = ('/api/fci/v1/ConFirma/suscripcion' if kind == 'fci_suscripcion'
@@ -262,7 +401,7 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
 
     @app.get('/fci/cuentas-comitentes', dependencies=fci_auth)
     async def fci_accounts(b: CredicoopClient = Depends(bank)):
-        return await b.fci_accounts()
+        return normalize_fci_accounts(await b.fci_accounts())
 
     @app.get('/fci/fondos', dependencies=fci_auth)
     async def fci_funds(b: CredicoopClient = Depends(bank)):
@@ -342,7 +481,10 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
 
     @app.get('/operaciones/{tipo}/{id_origen}', dependencies=auth)
     async def local_status(
-        tipo: Literal['transferencia', 'echeq', 'fci_suscripcion', 'fci_rescate'],
+        tipo: Literal[
+            'transferencia', 'echeq', 'fci_suscripcion', 'fci_rescate',
+            'beneficiario_transferencia', 'beneficiario_echeq', 'echeq_gestion',
+        ],
         id_origen: str,
         request: Request,
     ):
@@ -351,14 +493,71 @@ def create_app(settings: Settings | None = None, client: CredicoopClient | None 
             raise HTTPException(404, 'No hay registro local para ese idOrigen.')
         return row
 
+    @app.get('/operaciones', dependencies=auth)
+    async def list_operations(tipo: str | None = None, request: Request = None):
+        """Listado de operaciones registradas en el journal. Opcionalmente filtrar por tipo."""
+        ops = request.app.state.journal.list_operations(tipo)
+        return {'operaciones': ops}
+
+    @app.get('/operaciones/export', dependencies=auth)
+    async def export_operations(tipo: str | None = None, format: str = 'csv', request: Request = None):
+        """Exportar operaciones registradas. format=csv (por ahora)."""
+        ops = request.app.state.journal.list_operations(tipo)
+        if format != 'csv':
+            raise HTTPException(400, 'Sólo se soporta format=csv por ahora.')
+        # generar CSV simple
+        import io, csv
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(['tipo', 'id_origen', 'estado', 'actualizado', 'resultado'])
+        for o in ops:
+            writer.writerow([o.get('tipo'), o.get('id_origen'), o.get('estado'), o.get('actualizado'), json.dumps(o.get('resultado') or '')])
+        return JSONResponse(content=buf.getvalue())
+
     @app.get('/beneficiarios/transferencias', dependencies=auth)
-    async def transfer_beneficiary(cbu_cvu: Annotated[str, Query(pattern=r'^\d{22}$')], b: CredicoopClient = Depends(bank)):
-        return await b.request('GET', f'/api/transferencias/v1/beneficiario/{cfg.adherente}', params={'cbuCvu': cbu_cvu})
+    async def transfer_beneficiary(
+        cbu_cvu: Annotated[str, Query(pattern=r'^\d{22}$')],
+        b: CredicoopClient = Depends(bank),
+    ):
+        scope_enabled('beneficiarioTransferencia')
+        path = f'/api/transferencias/v1/beneficiario/{cfg.adherente}'
+        params = {'cbuCvu': cbu_cvu}
+        return await b.request('GET', path, params=params)
 
     @app.get('/beneficiarios/echeqs', dependencies=auth)
     async def echeq_beneficiary(documento: Annotated[str, Query(pattern=r'^\d{11}$')],
-                                documento_tipo: Literal['CUIT', 'CUIL', 'CDI'] = 'CUIT', b: CredicoopClient = Depends(bank)):
-        return await b.request('GET', f'/api/echeq/v1/beneficiario/{cfg.adherente}', params={'documento': documento, 'documentoTipo': documento_tipo})
+                                documento_tipo: Literal['CUIT', 'CUIL', 'CDI'] = 'CUIT',
+                                b: CredicoopClient = Depends(bank)):
+        scope_enabled('beneficiarioEcheq')
+        path = f'/api/echeq/v1/beneficiario/{cfg.adherente}'
+        params = {'documento': documento, 'documentoTipo': documento_tipo}
+        return await b.request('GET', path, params=params)
+
+    @app.post('/beneficiarios/transferencias', dependencies=auth)
+    async def add_transfer_beneficiary(
+        instruction: TransferBeneficiaryRegistrationRequest,
+        request: Request,
+        b: CredicoopClient = Depends(bank),
+    ):
+        scope_enabled('beneficiarioTransferencia')
+        payload = beneficiary_registration_payload(instruction, cfg.adherente)
+        return await submit_mutation(
+            'beneficiario_transferencia', instruction.idOrigen, payload,
+            '/api/transferencias/v1/beneficiario', request, b,
+        )
+
+    @app.post('/beneficiarios/echeqs', dependencies=auth)
+    async def add_echeq_beneficiary(
+        instruction: EcheqBeneficiaryRegistrationRequest,
+        request: Request,
+        b: CredicoopClient = Depends(bank),
+    ):
+        scope_enabled('beneficiarioEcheq')
+        payload = beneficiary_registration_payload(instruction, cfg.adherente)
+        return await submit_mutation(
+            'beneficiario_echeq', instruction.idOrigen, payload,
+            '/api/echeq/v1/beneficiario', request, b,
+        )
 
     @app.get('/destinatarios/consulta', dependencies=auth)
     async def destination(cbu_cvu: Annotated[str | None, Query(pattern=r'^\d{22}$')] = None,

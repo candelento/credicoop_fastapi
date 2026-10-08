@@ -47,11 +47,13 @@ Para hacer una prueba verdadera en homologación, detené el demo con `Ctrl+C` y
 ### Cómo operar desde el navegador
 
 1. **Cuentas y saldos:** presioná Conectar o Actualizar cuentas. Las cuentas disponibles se cargan en los selectores. Elegí la cuenta de débito por su número; el sistema incorpora su CBU al payload.
-2. **Movimientos:** elegí cuenta y fecha Desde. Hasta vacío usa hoy en Argentina. Para este ambiente de prueba, presioná Usar fechas de homologación y consultá hasta 28/08/2026. Podés descargar la respuesta en JSON; los encabezados de saldo se muestran aparte.
+2. **Movimientos:** elegí cuenta y fecha Desde. Hasta vacío usa hoy en Argentina. El botón Usar fechas de homologación propone el rango dinámico configurado por el servicio; si el banco rechaza fechas recientes, verificá con el banco el rango habilitado y usalo explícitamente. Podés descargar la respuesta en JSON; los encabezados de saldo se muestran aparte.
 3. **Transferencias:** elegí cuenta de débito, beneficiario del Excel de homologación y un importe de prueba. El selector copia nombre normalizado, documento y CBU/CVU. Consultar beneficiario en el banco permite verificar su presencia en la agenda del adherente. Revisá la respuesta.
-4. **eCheqs:** elegí un beneficiario de la lista específica de eCheq, un importe, tipo y fecha de pago. ECHC usa el día operativo; ECHD una fecha posterior. El ejemplo diferido propone 04/09/2026 cuando el ambiente está en 28/08/2026.
+4. **eCheqs:** elegí un beneficiario de la lista específica de eCheq, un importe, tipo y fecha de pago. ECHC usa el día operativo; ECHD una fecha posterior. La fecha debe confirmarse con el banco para homologación; no se infiere del reloj local ni de la última fecha de movimientos aceptada.
 5. **Revisión:** presioná Revisar vista previa. Ese paso valida el payload local y no envía pagos. Un cambio posterior en el formulario invalida la vista previa. Después de revisar, marcá la casilla y presioná Enviar a firma en el banco. Un cuadro muestra ambiente, importe, beneficiario, CBU de débito e ID para confirmar el envío.
 6. **Seguimiento:** la respuesta conserva idOperacion, idOrigen y estado real del banco. Consultá de nuevo tras firmar y activar en BIE. Ante un error o timeout, revisá primero el registro local; no crees un nuevo ID para repetir el mismo pago.
+
+El panel **Request / response a la API del banco** muestra los intercambios reales salientes del backend, incluidos método, URL y argumentos, headers, body y respuesta HTTP/body del banco. Si una operación no llegó a invocar al banco (por ejemplo, una validación local o un idOrigen duplicado), el panel lo indica. Los headers y campos que podrían contener credenciales se muestran redactados.
 
 ### Probar las órdenes de proveedores con otros destinatarios
 
@@ -91,7 +93,7 @@ La pantalla deja revisar una operación individual por vez. Los endpoints JSON m
 | API | https://homoapibccl.bancocredicoop.coop |
 | Audience del JWT | https://homoapibccl.bancocredicoop.coop/auth/realms/homologacion |
 | Endpoint de token | Realm + `/protocol/openid-connect/token` |
-| Fecha operativa de prueba | 2026-08-28, informada por el banco |
+| Fecha operativa | No fijada por defecto; se usa la fecha actual de Argentina hasta que el banco confirme otra |
 
 Los adherentes, cuentas, firmantes y fechas de ejemplo de Postman **no se usan como datos de tu empresa**. El adherente se incorpora desde `.env`. Los firmantes y el CBU de débito deben corresponder a tu habilitación real de homologación.
 
@@ -99,23 +101,30 @@ La autenticación genera una nueva assertion JWT RS256, con `iss`, `sub`, `aud`,
 
 El proyecto solicita únicamente los scopes que usa: `cuentas`, `transferenciasConFirma`, `echeqConFirma`, `fciConFirma`, `beneficiarioTransferencia`, `beneficiarioEcheq` y `consultaCbuCvuAlias`. No implementa VEP ni DEBIN en esta versión.
 
-## Las cuatro funciones solicitadas
+## Funciones bancarias implementadas
 
 | Función | Endpoint local |
 |---|---|
 | Listar cuentas y sus saldos | `GET /cuentas` |
 | Saldo de una cuenta | `GET /cuentas/{nro_cuenta}/saldo` |
-| Movimientos entre fechas | `GET /cuentas/{nro_cuenta}/movimientos?fecha_desde=2026-08-01&fecha_hasta=2026-08-28` |
+| Movimientos entre fechas | `GET /cuentas/{nro_cuenta}/movimientos?fecha_desde=AAAA-MM-DD&fecha_hasta=AAAA-MM-DD` |
 | Transferencia pendiente de firma | `POST /transferencias` |
 | Emisión eCheq pendiente de firma | `POST /echeqs` |
+| Consultar estado de transferencia | `GET /transferencias/estado?id_operacion=...` |
+| Consultar beneficiario de transferencia | `GET /beneficiarios/transferencias?cbu_cvu=...` |
+| Alta condicional de beneficiario de transferencia | `POST /beneficiarios/transferencias` |
+| Consultar/alta beneficiario de eCheq | `GET`/`POST /beneficiarios/echeqs` |
+| Consultar emisión eCheq | `GET /echeqs/estado?id_operacion=...` |
+| Listar eCheqs generados o recibidos | `POST /echeqs/lista` |
+| Previsualizar/gestionar eCheqs | `POST /echeqs/gestion/previsualizar` / `POST /echeqs/gestion` |
 
 `nro_cuenta` es el campo `nroCuenta` devuelto por `/cuentas`, conservando ceros iniciales. Para pagos se usa el **CBU de 22 dígitos**, que también devuelve esa consulta.
 
 ### Movimientos y fecha predeterminada
 
-`fecha_desde` es obligatoria. Si no indicás `fecha_hasta`, se toma la **fecha actual de Argentina**, como pediste. La API local acepta `AAAA-MM-DD` y convierte al formato `AAAAMMDD` del banco. La fecha operativa fija sólo se usa para validar los pagos; no sustituye silenciosamente la fecha actual de las consultas.
+`fecha_desde` es obligatoria. Si no indicás `fecha_hasta`, se toma la **fecha actual de Argentina**, como pediste. La API local acepta `AAAA-MM-DD` y convierte al formato `AAAAMMDD` del banco. La fecha operativa configurada sólo se usa para validar los pagos; no sustituye silenciosamente la fecha actual de las consultas.
 
-Como homologación está posicionada en el 28/08/2026, para probar agosto indicá `fecha_hasta=2026-08-28`. Las consultas posteriores pueden ser rechazadas por el banco. `/configuracion` muestra ambas fechas, y la respuesta de movimientos advierte si consultaste más allá de la fecha de prueba configurada. Si el banco mueve el ambiente, actualizá `CREDICOOP_FECHA_OPERATIVA`.
+No se conserva una fecha operativa bancaria fija: el `.env` local usa `CREDICOOP_FECHA_OPERATIVA=null`, por lo que la validación usa la fecha actual de Argentina. Esto no demuestra que el calendario de homologación coincida con el calendario local. Confirmá la fecha con el banco antes de emitir eCheqs; si el banco informa una fecha distinta, configúrala explícitamente. La consulta de movimientos usa el rango indicado y no deduce una fecha operativa a partir de la fecha del equipo. En una consulta real del 06/10/2026, homologación rechazó fecha hasta posterior al 28/08/2026 pero aceptó un rango histórico terminado ese día; esto no confirma la fecha operativa para pagos.
 
 Si el banco devuelve `alerta` por exceso de registros, el cliente divide el rango en subrangos sin superposición. Si incluso un día excede el tope, devuelve `completa=false` y `rangos_incompletos`. No presenta resultados parciales como completos. Los `ENCABEZADO` se separan de los movimientos porque representan saldos. Se admiten rangos de hasta 367 días por consulta local. Las consultas grandes pueden tardar varios minutos por los límites del banco.
 
@@ -131,15 +140,37 @@ Si el banco devuelve `alerta` por exceso de registros, el cliente divide el rang
 
 Los importes se ingresan como texto con punto decimal, por ejemplo `"1234.56"`; se rechazan floats, comas decimales, valores negativos y más de dos decimales. El campo `orden` se genera secuencialmente. Se admiten hasta 200 beneficiarios por transferencia múltiple; los CVU sólo se admiten en operaciones individuales. La documentación indica que actualmente se permiten transferencias en pesos, por eso esta versión valida `ARS`.
 
-`fechaPago` de transferencias es opcional; si se indica, debe ser el día operativo del banco. No programa transferencias futuras. Los textos de nombres, observaciones y referencias se validan sin signos especiales; ingresá nombres normalizados sin tildes ni comas y verificá su correspondencia con el beneficiario bancario.
+`fechaPago` de transferencias es opcional; si se indica, debe ser el día operativo del banco. No programa transferencias futuras. Los nombres admiten puntuación usual; deben corresponder exactamente al beneficiario bancario.
 
 ### eCheqs
 
 El procedimiento es equivalente, con `ejemplos/echeq.json`, `/beneficiarios/echeqs?documento=...`, `/echeqs/previsualizar`, `/echeqs` y `/echeqs/estado?id_operacion=...`.
 
-`tipoCheque=ECHC` requiere fecha de pago igual al día operativo. `ECHD` requiere una fecha posterior. En homologación se comparan con 28/08/2026. Se exige modo cruzado (`modo="1"`) y el carácter se fija siempre como A la orden (`caracter="1"`). No se mezclan cheques con y sin `numeroCheque` dentro del mismo lote. El máximo de eCheqs por lote está parametrizado por el banco y lo valida el banco.
+`tipoCheque=ECHC` requiere fecha de pago igual al día operativo. `ECHD` requiere una fecha posterior. La API compara estas fechas con la fecha operativa configurada (dinámica por defecto); confirmá ese día con el banco antes de enviar. Se exige modo cruzado (`modo="1"`) y el carácter se fija siempre como A la orden (`caracter="1"`). No se mezclan cheques con y sin `numeroCheque` dentro del mismo lote. El máximo de eCheqs por lote está parametrizado por el banco y lo valida el banco.
 
 La colección Postman admite `idOrigen` para consultar emisión, mientras que la documentación pública sólo describe `idOperacion`. El endpoint local de eCheq utiliza el parámetro documentado `id_operacion`; si se pierde la respuesta de emisión, revisá el registro local y BIE o consultá al banco antes de repetir.
+
+#### Listado, altas y gestión
+
+`POST /echeqs/lista` recibe `idOrigen` y un `filtro` con `gestion=GENERADOS|RECIBIDOS`, estados documentados, rangos de fecha y `pagina` (por defecto 1) y `limite` (20). La respuesta vacía se conserva como respuesta real del banco.
+
+Las altas de agenda usan `POST /beneficiarios/transferencias` y `POST /beneficiarios/echeqs`. El ejecutor de homologación primero consulta cada beneficiario y sólo intenta un alta cuando recibe el código oficial específico de “no existe en la agenda” (`APIE-7017` para transferencias o `APIE-8014` para eCheq). No toma errores de autenticación, conexión u otros errores de negocio como ausencia. Tras un intento de alta consulta otra vez; el `idOrigen` de cada alta es estable y el Journal impide volver a transmitirlo.
+
+`POST /echeqs/gestion` acepta `ACEPTAR`, `ENDOSAR` y `DEPOSITAR`. ENDOSAR exige `tipoEndoso` y beneficiario; DEPOSITAR exige monto y fecha de pago por cada cheque. El listado devuelve el identificador como `chequeId` y el CMC7 completo como `cmc7completo`; el cliente los envía como `idCheque` y `cmc7`. Las previsualizaciones no consultan ni modifican el banco. Una respuesta de gestión puede carecer de `idOperacion`; no se exige ese campo para registrar una respuesta.
+
+#### Consultas/evidencias reales de homologación
+
+Desde PowerShell, en la raíz del proyecto:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\probar_homologacion.py
+```
+
+El script usa `.env`, restringe el host a `homoapibccl.bancocredicoop.coop`, consulta cuentas, movimientos con `nroCuenta`, beneficiarios de la planilla de pruebas y listas GENERADOS/RECIBIDOS. Sin parámetros usa un rango reciente para movimientos; los parámetros opcionales `--movimientos-desde AAAA-MM-DD --movimientos-hasta AAAA-MM-DD` permiten indicar un rango en conjunto. Ante rechazo del banco, no supongas una fecha límite, confirmá con el banco el rango permitido. Prepara las vistas previas de ARS 1.00, pero **no envía pagos ni gestiones**. Sólo intenta altas cuando la respuesta bancaria confirma la ausencia con el código específico; las verifica con una nueva consulta.
+
+Cada intercambio HTTP bancario —incluida autenticación, error o intento sin respuesta— se guarda junto con las llamadas locales de FastAPI en `evidencias/<fecha_hora>/`: `.request.txt`, `.response.txt`, JSON por llamada, `intercambios.jsonl`, `RESUMEN.md` y `RESUMEN.csv`. Authorization, tokens, client_assertion, claves y contraseñas se redactan. Un HTTP 200 sólo identifica una respuesta recibida; no prueba que un pago se haya completado ni que el scope esté homologado. Las mutaciones de transferencia, emisión y gestión quedan pendientes de confirmación conjunta de payloads antes de ejecutarse.
+
+El ejecutor usa `ejemplos/beneficiarios_homologacion.csv`, que está disponible en este proyecto, y compara CBU con `Beneficiarios_Credicoop.xlsx`. Si falta el libro del banco `BeneficiariosHomologacionAPI EMPRESA(3).xls`, lo informa y no deduce de ello que falten beneficiarios en la agenda.
 
 ### Firmantes
 
@@ -161,6 +192,8 @@ El token requiere el scope `fciConFirma`, habilitado por el banco para el adhere
 
 El firmante de todas las suscripciones y rescates FCI se fija en el servidor como DNI `44379155`. El cliente no puede sustituir ese dato; verificá que corresponda a un operador habilitado para el adherente. El DNI se agrega únicamente a las operaciones FCI, no altera los firmantes de transferencias ni eCheqs.
 
+Si el banco no informa `cuentasVinculadas`, la API local asocia automáticamente el CBU de la empresa `1910054455005400309496` para débito/crédito en FCI y expone un aviso en la respuesta de `GET /fci/cuentas-comitentes`.
+
 | Función | Endpoint local |
 |---|---|
 | Consultar cuentas comitentes, CBU vinculados, perfil y vigencia del test | `GET /fci/cuentas-comitentes` |
@@ -174,6 +207,13 @@ El firmante de todas las suscripciones y rescates FCI se fija en el servidor com
 | Consultar tenencia valorizada | `POST /fci/saldos` |
 | Consultar movimientos por comitente | `POST /fci/movimientos` |
 | Consultar detalle de un movimiento | `GET /fci/movimientos/detalle?tipo=...&numero=...&sucursal=...&formula=...` |
+
+| Método banco | Ruta banco | Uso en la pantalla |
+|---|---|---|
+| `GET` | `/api/fci/v1/cuentas-comitentes` | Cuentas comitentes, perfil, test y CBU vinculados |
+| `GET` | `/api/fci/v1/fondos` | Fondos disponibles |
+| `POST` | `/api/fci/v1/ConFirma/suscripcion` | Envío de suscripción a firma |
+| `POST` | `/api/fci/v1/ConFirma/rescate` | Envío de rescate a firma |
 
 Las consultas de cuentas y fondos generan un `idOrigen` nuevo automáticamente. Las consultas de saldos y movimientos aceptan `cuentaComitente` con `tipoCuenta`, `sucursalCuenta` y `numeroCuenta`; la app agrega adherente e identificador y convierte las fechas al formato `AAAAMMDD` del banco. Para detalle se requiere la referencia del movimiento (`tipo`, `numero`, `sucursal`, `formula`).
 
@@ -190,8 +230,8 @@ Con FastAPI iniciado, abrí otra terminal. En Windows, reemplazá `python` por `
 ```bash
 python credicoop.py cuentas
 python credicoop.py saldo NUMERO_CUENTA
-python credicoop.py movimientos NUMERO_CUENTA --desde 2026-08-01 --hasta 2026-08-28 --salida movimientos.json
-python credicoop.py movimientos NUMERO_CUENTA --desde 2026-08-01
+python credicoop.py movimientos NUMERO_CUENTA --desde AAAA-MM-DD --hasta AAAA-MM-DD --salida movimientos.json
+python credicoop.py movimientos NUMERO_CUENTA --desde AAAA-MM-DD
 python credicoop.py transferencia ejemplos/transferencia.json
 python credicoop.py echeq ejemplos/echeq.json
 ```

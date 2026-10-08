@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     private_key_password: SecretStr | None = None
     api_key: SecretStr = SecretStr('')
     journal_path: Path = Path('data/operaciones.sqlite3')
-    fecha_operativa: date | None = date(2026, 8, 28)
+    fecha_operativa: date | None = None
     timeout: float = Field(default=30, gt=0, le=120)
     ca_bundle: Path | None = None
     scopes: str = 'cuentas transferenciasConFirma echeqConFirma fciConFirma beneficiarioTransferencia beneficiarioEcheq consultaCbuCvuAlias'

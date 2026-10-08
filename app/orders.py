@@ -110,6 +110,46 @@ def load_supplier_master(path: Path) -> dict[str, list[Supplier]]:
             workbook.close()
 
 
+def merge_supplier_sources(*sources: dict[str, list[Supplier]]) -> dict[str, list[Supplier]]:
+    merged: dict[str, list[Supplier]] = {}
+    for source in sources:
+        for key, items in source.items():
+            bucket = merged.setdefault(key, [])
+            for supplier in items:
+                if supplier not in bucket:
+                    bucket.append(supplier)
+    return merged
+
+
+def load_homologation_suppliers(path: Path) -> dict[str, list[Supplier]]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        beneficiaries = payload.get('beneficiarios', []) if isinstance(payload, dict) else []
+    except (OSError, ValueError, TypeError) as exc:
+        raise SupplierMasterError('No se pudo leer la lista de beneficiarios de homologación.') from exc
+
+    suppliers: dict[str, list[Supplier]] = {}
+    for beneficiary in beneficiaries:
+        if not isinstance(beneficiary, dict):
+            continue
+        if beneficiary.get('uso') != 'emision' or beneficiary.get('tipo') != 'transferencia':
+            continue
+        name = ' '.join(str(beneficiary.get('nombre') or '').split())
+        key = normalize_text(name)
+        if len(key) < 3:
+            continue
+        supplier = Supplier(
+            name=name,
+            document=_digits(beneficiary.get('documento')),
+            cbu=_digits(beneficiary.get('cbuCvu')),
+        )
+        if supplier not in suppliers.setdefault(key, []):
+            suppliers[key].append(supplier)
+    return suppliers
+
+
 def _amount_value(token: str) -> str:
     compact = token.replace(' ', '')
     if ',' in compact:
@@ -367,11 +407,18 @@ class DriveOrderService:
 
     async def sync(self, journal: Journal) -> dict:
         suppliers = load_supplier_master(self.master_path)
+        if self.settings.is_homologation:
+            suppliers = merge_supplier_sources(
+                suppliers,
+                load_homologation_suppliers(self.project_root / 'ejemplos' / 'beneficiarios_homologacion.json'),
+            )
         async with httpx.AsyncClient(timeout=30) as client:
             token = await self._access_token(client)
             files = await self._list_files(client, token)
+            active_file_ids: list[str] = []
             for metadata in files:
                 file_id = metadata['id']
+                active_file_ids.append(file_id)
                 try:
                     async with client.stream(
                         'GET',
@@ -409,6 +456,7 @@ class DriveOrderService:
                         'cheque_type': None,
                     }
                 journal.store_order(order)
+            journal.retain_only_orders(active_file_ids)
         return {
             'enviada': False,
             'solo_lectura': True,

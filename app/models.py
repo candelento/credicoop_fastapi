@@ -31,9 +31,10 @@ CUI = Annotated[str, Field(pattern=r'^\d{11}$')]
 Origin = Annotated[str, Field(min_length=1, max_length=36, pattern=r'^[A-Za-z0-9_-]+$')]
 DocType = Literal['CUIT', 'CUIL', 'CDI', 'DNI', 'LC', 'PE', 'CI', 'LE']
 Concept = Literal['ALQ', 'CUO', 'EXP', 'FAC', 'PRE', 'SEG', 'HON', 'VAR', 'OIH', 'BRH', 'SON', 'APC', 'ROP', 'SIS', 'ESE', 'HAB']
-Text100 = Annotated[str, Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9 ]+$')]
+Text100 = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9 .,&'()/\-]+$")]
 Mail = Annotated[str, Field(min_length=3, max_length=150, pattern=r'^[^\s@]+@[^\s@]+\.[^\s@]+$')]
 FCI_SIGNER_DNI = '44379155'
+FCI_COMPANY_CBU = '1910054455005400309496'
 
 
 class StrictModel(BaseModel):
@@ -56,6 +57,117 @@ class TransferBeneficiary(StrictModel):
     observaciones: Annotated[str, Field(max_length=60, pattern=r'^[A-Za-z0-9 ]*$')] | None = None
     referenciaConcepto: Annotated[str, Field(max_length=12, pattern=r'^[A-Za-z0-9 ]*$')] | None = None
     mails: list[Mail] = Field(default_factory=list, max_length=3)
+
+
+class TransferBeneficiaryRegistration(StrictModel):
+    orden: int = Field(ge=0)
+    cbuCvu: CBU
+    moneda: Literal['ARS'] = 'ARS'
+    cui: CUI
+    nombre: Text100
+    mails: list[Mail] = Field(default_factory=list, max_length=3)
+    visibleBI: bool = True
+
+
+class TransferBeneficiaryRegistrationRequest(StrictModel):
+    idOrigen: Origin
+    beneficiarios: list[TransferBeneficiaryRegistration] = Field(min_length=1, max_length=200)
+
+
+class EcheqBeneficiaryRegistration(StrictModel):
+    orden: int = Field(ge=0)
+    documento: CUI
+    documentoTipo: Literal['CUIT', 'CUIL', 'CDI']
+
+
+class EcheqBeneficiaryRegistrationRequest(StrictModel):
+    idOrigen: Origin
+    beneficiarios: list[EcheqBeneficiaryRegistration] = Field(min_length=1, max_length=200)
+
+
+EcheqState = Literal[
+    'EMITIDO-PENDIENTE', 'ACTIVO', 'ACTIVO-PENDIENTE', 'DEVOLUCION-PENDIENTE',
+    'CUSTODIA', 'CESION-PENDIENTE', 'DEPOSITADO', 'PRESENTADO', 'PAGADO',
+    'RECHAZADO', 'ANULADO', 'CADUCADO', 'REPUDIADO', 'AVAL-PENDIENTE', 'TODOS',
+]
+
+
+class EcheqListFilter(StrictModel):
+    gestion: Literal['GENERADOS', 'RECIBIDOS']
+    estado: EcheqState = 'TODOS'
+    idCheque: Annotated[str, Field(min_length=1, max_length=50)] | None = None
+    cmc7: Annotated[str, Field(min_length=1, max_length=40)] | None = None
+    numeroCheque: Annotated[str, Field(min_length=1, max_length=20)] | None = None
+    cuitCuilCdi: CUI | None = None
+    fechaEmisionDesde: BankDate | None = None
+    fechaEmisionHasta: BankDate | None = None
+    fechaPagoDesde: BankDate | None = None
+    fechaPagoHasta: BankDate | None = None
+    cbuEmisor: CBU | None = None
+    moneda: Literal['ARS', 'USD'] | None = None
+    pagina: int = Field(default=1, ge=1)
+    limite: Literal[20] = 20
+
+    @model_validator(mode='after')
+    def valid_date_ranges(self):
+        if (self.fechaEmisionDesde and self.fechaEmisionHasta
+                and self.fechaEmisionDesde > self.fechaEmisionHasta):
+            raise ValueError('fechaEmisionDesde debe ser menor o igual a fechaEmisionHasta.')
+        if self.fechaPagoDesde and self.fechaPagoHasta and self.fechaPagoDesde > self.fechaPagoHasta:
+            raise ValueError('fechaPagoDesde debe ser menor o igual a fechaPagoHasta.')
+        return self
+
+
+class EcheqListRequest(StrictModel):
+    idOrigen: Origin
+    filtro: EcheqListFilter
+
+
+class ManagedEcheq(StrictModel):
+    idCheque: Annotated[str, Field(min_length=1, max_length=50)] | None = None
+    cmc7: Annotated[str, Field(min_length=1, max_length=40)] | None = None
+    monto: Money | None = None
+    fechaPago: BankDate | None = None
+
+    @model_validator(mode='after')
+    def has_identifier(self):
+        if not self.idCheque and not self.cmc7:
+            raise ValueError('Informar idCheque o cmc7 para cada eCheq.')
+        return self
+
+
+class EcheqEndorseBeneficiary(StrictModel):
+    documento: CUI
+    documentoTipo: Literal['CUIT', 'CUIL', 'CDI']
+
+
+class EcheqManagementRequest(StrictModel):
+    idOrigen: Origin
+    cbuCuenta: CBU
+    operadoresFirmantes: list[Signer] = Field(default_factory=list)
+    accion: Literal['ACEPTAR', 'ENDOSAR', 'DEPOSITAR']
+    echeqs: list[ManagedEcheq] = Field(min_length=1, max_length=20)
+    tipoEndoso: Literal['NOM'] | None = None
+    beneficiario: EcheqEndorseBeneficiary | None = None
+
+    @model_validator(mode='after')
+    def validate_action_fields(self):
+        if self.accion == 'ACEPTAR':
+            if self.tipoEndoso or self.beneficiario:
+                raise ValueError('ACEPTAR no admite tipoEndoso ni beneficiario.')
+            if any(item.monto is not None or item.fechaPago is not None for item in self.echeqs):
+                raise ValueError('ACEPTAR no admite importe ni fechaPago.')
+        elif self.accion == 'ENDOSAR':
+            if not self.tipoEndoso or not self.beneficiario:
+                raise ValueError('ENDOSAR requiere tipoEndoso y beneficiario.')
+            if any(item.monto is not None or item.fechaPago is not None for item in self.echeqs):
+                raise ValueError('ENDOSAR no admite importe ni fechaPago.')
+        else:
+            if self.tipoEndoso or self.beneficiario:
+                raise ValueError('DEPOSITAR no admite tipoEndoso ni beneficiario.')
+            if any(item.monto is None or item.fechaPago is None for item in self.echeqs):
+                raise ValueError('DEPOSITAR requiere monto y fechaPago para cada eCheq.')
+        return self
 
 
 class SignedInstruction(StrictModel):
@@ -176,6 +288,38 @@ class FciMovementsRequest(StrictModel):
 
 class OrderDebitAccount(StrictModel):
     cbuCuentaDebito: CBU
+
+
+def beneficiary_registration_payload(
+    instruction: TransferBeneficiaryRegistrationRequest | EcheqBeneficiaryRegistrationRequest,
+    adherente: int,
+) -> dict:
+    body = instruction.model_dump(mode='json', exclude_none=True)
+    body['numeroAdherente'] = adherente
+    for beneficiary in body['beneficiarios']:
+        if not beneficiary.get('mails'):
+            beneficiary.pop('mails', None)
+    return body
+
+
+def echeq_list_payload(instruction: EcheqListRequest, adherente: int) -> dict:
+    body = instruction.model_dump(mode='json', exclude_none=True)
+    body['numeroAdherente'] = adherente
+    for name in ('fechaEmisionDesde', 'fechaEmisionHasta', 'fechaPagoDesde', 'fechaPagoHasta'):
+        if name in body['filtro']:
+            body['filtro'][name] = body['filtro'][name].replace('-', '')
+    return body
+
+
+def echeq_management_payload(instruction: EcheqManagementRequest, adherente: int) -> dict:
+    body = instruction.model_dump(mode='json', exclude_none=True)
+    body['numeroAdherente'] = adherente
+    if not body['operadoresFirmantes']:
+        body.pop('operadoresFirmantes')
+    for cheque in body['echeqs']:
+        if 'fechaPago' in cheque:
+            cheque['fechaPago'] = cheque['fechaPago'].replace('-', '')
+    return body
 
 
 def instruction_payload(instruction: TransferRequest | EcheqRequest, adherente: int, today: date) -> dict:

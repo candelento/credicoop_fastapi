@@ -8,10 +8,9 @@
 <button class="nav" data-view="movimientos"><span>02</span>Movimientos</button>
 <button class="nav" data-view="transferencias"><span>03</span>Transferencias</button>
 <button class="nav" data-view="echeqs"><span>04</span>eCheqs</button>
-<button class="nav" data-view="ordenes"><span>05</span>Órdenes PDF</button>
-<button class="nav" data-view="proveedores"><span>06</span>Preparación de pagos</button>
-<button class="nav" data-view="seguimiento"><span>07</span>Seguimiento</button>
-<button class="nav" data-view="fci"><span>08</span>Fondos 1810</button>
+<button class="nav" data-view="proveedores"><span>05</span>Preparación de pagos</button>
+<button class="nav" data-view="seguimiento"><span>06</span>Seguimiento</button>
+<button class="nav" data-view="fci"><span>07</span>Fondos 1810</button>
 </nav><div class="sidebar-bottom"><span class="dot"></span>Firma posterior en BIE<a href="/docs" target="_blank" rel="noopener">Documentación de la API ↗</a></div></aside>
 <main>
 <header class="topbar"><div><span class="eyebrow">BANCO CREDICOOP</span><h1 id="page-title">Cuentas y saldos</h1></div><span id="environment" class="pill">Sin conectar</span></header>
@@ -33,6 +32,77 @@
 <div class="notice neutral">Firmante fijo para operaciones FCI: DNI <strong>44379155</strong>. Las suscripciones y los rescates quedan pendientes de firma y activación en BIE. Revisá el perfil del fondo y el test del inversor antes de confirmar.</div>
 <div class="panel"><div class="panel-title"><h3>Cuentas comitentes y vinculadas</h3><span id="fci-profile" class="muted">Sin consulta</span></div><div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Sucursal</th><th>Número de cuenta</th></tr></thead><tbody id="fci-accounts-body"></tbody></table></div><p id="fci-linked-cbus" class="muted"></p></div>
 <div class="panel"><div class="panel-title"><h3>Fondos disponibles</h3><span class="muted">Familia 1810</span></div><div class="table-wrap"><table><thead><tr><th>Código</th><th>Fondo</th><th>Moneda</th><th class="numeric">Cuotaparte</th><th>Cotización</th><th>Perfil</th><th>Plazo</th><th>Cartera</th></tr></thead><tbody id="fci-funds-body"></tbody></table></div></div>
+<section class="panel"><div class="panel-title"><h3>Request / response a la API del banco</h3><span class="muted">Métodos GET y POST usados en FCI</span></div>
+<div class="bank-exchange"><div class="bank-exchange-heading"><div class="bank-exchange-identity"><span class="method-badge method-get">GET</span><h4>Cuentas comitentes y CBU vinculados</h4></div><span class="exchange-url">/api/fci/v1/cuentas-comitentes</span></div><div class="bank-exchange-grid"><article class="exchange-card exchange-card-request"><div class="exchange-card-heading"><div class="exchange-card-title">Request</div><span class="exchange-card-caption">Query params</span></div><pre><code>{
+  "numeroAdherente": 661395,
+  "idOrigen": "2d4c5c57-fci-demo"
+}</code></pre></article><article class="exchange-card exchange-card-response"><div class="exchange-card-heading"><div class="exchange-card-title">Response</div><span class="exchange-card-caption">200 OK</span></div><pre><code>{
+  "data": {
+    "estadoTestInversor": "Vigente",
+    "perfilInversor": "MODERADO",
+    "cuentasComitentes": [
+      {"tipoCuenta": "ORDI", "sucursalCuenta": "119", "numeroCuenta": "011123/9"}
+    ],
+    "cuentasVinculadas": [
+      {"cbu": "1910054455005400309496"}
+    ]
+  }
+}</code></pre></article></div></div>
+<div class="bank-exchange"><div class="bank-exchange-heading"><div class="bank-exchange-identity"><span class="method-badge method-get">GET</span><h4>Fondos disponibles</h4></div><span class="exchange-url">/api/fci/v1/fondos</span></div><div class="bank-exchange-grid"><article class="exchange-card exchange-card-request"><div class="exchange-card-heading"><div class="exchange-card-title">Request</div><span class="exchange-card-caption">Query params</span></div><pre><code>{
+  "numeroAdherente": 661395,
+  "idOrigen": "2d4c5c57-fci-fondos"
+}</code></pre></article><article class="exchange-card exchange-card-response"><div class="exchange-card-heading"><div class="exchange-card-title">Response</div><span class="exchange-card-caption">200 OK</span></div><pre><code>{
+  "data": {
+    "detalleFondo": [
+      {
+        "codigo": "FCAD",
+        "nombre": "1810 AHORRO",
+        "moneda": "ARS",
+        "valorCuotaparte": "146.25926100",
+        "perfil": "Conservador",
+        "plazo": "Inmediato"
+      }
+    ]
+  }
+}</code></pre></article></div></div>
+<div class="bank-exchange"><div class="bank-exchange-heading"><div class="bank-exchange-identity"><span class="method-badge method-post">POST</span><h4>Suscripción a firma</h4></div><span class="exchange-url">/api/fci/v1/ConFirma/suscripcion</span></div><div class="bank-exchange-grid"><article class="exchange-card exchange-card-request"><div class="exchange-card-heading"><div class="exchange-card-title">Request</div><span class="exchange-card-caption">JSON al banco</span></div><pre><code>{
+  "numeroAdherente": 661395,
+  "idOrigen": "demo-fci-sub-001",
+  "cbuCuentaDebito": "1910054455005400309496",
+  "cuentaComitente": {"tipoCuenta": "ORDI", "sucursalCuenta": "119", "numeroCuenta": "011123/9"},
+  "solicitudSuscripcion": {
+    "codigoFondo": "FCAD",
+    "moneda": "ARS",
+    "monto": "100.00",
+    "avanzarTestVencido": false,
+    "aceptarRiesgoExcedido": false
+  },
+  "operadoresFirmantes": [{"documento": "44379155", "documentoTipo": "DNI"}]
+}</code></pre></article><article class="exchange-card exchange-card-response"><div class="exchange-card-heading"><div class="exchange-card-title">Response</div><span class="exchange-card-caption">200 OK</span></div><pre><code>{
+  "data": {
+    "idOperacion": 900001,
+    "idOrigen": "demo-fci-sub-001",
+    "estadoOperacion": {"descripcion": "Enviada a la firma"}
+  }
+}</code></pre></article></div></div>
+<div class="bank-exchange"><div class="bank-exchange-heading"><div class="bank-exchange-identity"><span class="method-badge method-post">POST</span><h4>Rescate a firma</h4></div><span class="exchange-url">/api/fci/v1/ConFirma/rescate</span></div><div class="bank-exchange-grid"><article class="exchange-card exchange-card-request"><div class="exchange-card-heading"><div class="exchange-card-title">Request</div><span class="exchange-card-caption">JSON al banco</span></div><pre><code>{
+  "numeroAdherente": 661395,
+  "idOrigen": "demo-fci-red-001",
+  "cbuCuentaCredito": "1910054455005400309496",
+  "cuentaComitente": {"tipoCuenta": "ORDI", "sucursalCuenta": "119", "numeroCuenta": "011123/9"},
+  "solicitudRescate": {
+    "codigoFondo": "FCAD",
+    "moneda": "ARS",
+    "cuotapartes": "500"
+  },
+  "operadoresFirmantes": [{"documento": "44379155", "documentoTipo": "DNI"}]
+}</code></pre></article><article class="exchange-card exchange-card-response"><div class="exchange-card-heading"><div class="exchange-card-title">Response</div><span class="exchange-card-caption">200 OK</span></div><pre><code>{
+  "data": {
+    "idOperacion": 900002,
+    "idOrigen": "demo-fci-red-001",
+    "estadoOperacion": {"descripcion": "Enviada a la firma"}
+  }
+}</code></pre></article></div></div></section>
 <form id="fci-form" class="panel"><div class="form-heading"><span class="step">1</span><h3>Preparar operación a firma</h3></div>
 <div class="form-grid three"><label>Operación<select id="fci-kind"><option value="suscripcion">Suscripción</option><option value="rescate">Rescate</option></select></label><label>Cuenta comitente<select id="fci-account" required></select></label><label>CBU vinculado<select id="fci-cbu" required></select></label><label>Fondo<select id="fci-fund" required></select></label><label id="fci-amount-label">Importe<input id="fci-amount" inputmode="decimal"></label><label id="fci-units-label" hidden>Cuotapartes<input id="fci-units" inputmode="decimal"></label><label id="fci-redemption-mode-label" hidden>Rescatar por<select id="fci-redemption-mode"><option value="monto">Importe</option><option value="cuotapartes">Cuotapartes</option></select></label></div>
 <div id="fci-risk-options" class="form-grid"><label class="checkbox"><input id="fci-advance-expired" type="checkbox">Acepto avanzar aunque el test del inversor esté vencido.</label><label class="checkbox"><input id="fci-accept-risk" type="checkbox">Acepto avanzar si el perfil del fondo supera mi perfil inversor.</label></div>
@@ -51,20 +121,59 @@
 <div id="test-order-note" class="notice neutral" hidden></div>
 <form id="payment-form" class="panel"><div class="form-heading"><span class="step">1</span><h3>Cuenta y beneficiario</h3></div>
 <div class="form-grid"><label>Cuenta de débito<select id="payment-account" required></select></label><label>Beneficiarios de homologación<select id="test-beneficiary"><option value="">Elegir beneficiario de prueba</option></select></label><label>Nombre del beneficiario<input id="beneficiary-name" required maxlength="100"></label><label>CUIT / CUIL / CDI<input id="beneficiary-document" required inputmode="numeric" pattern="[0-9]{11}" maxlength="11"></label><label id="cbu-label">CBU / CVU de destino<input id="beneficiary-cbu" inputmode="numeric" pattern="[0-9]{22}" maxlength="22"></label><div class="field-action"><button id="validate-beneficiary" type="button" class="secondary">Consultar beneficiario en el banco</button><small id="beneficiary-status">Verificá que esté en la agenda del adherente.</small></div></div>
+<section id="beneficiary-response-panel" class="beneficiary-response panel" hidden><div class="panel-title"><h3>Datos del beneficiario devueltos por el banco</h3><span id="beneficiary-response-status" class="pill soft"></span></div><div class="table-wrap"><table><thead><tr><th>Campo</th><th>Valor</th></tr></thead><tbody id="beneficiary-response-fields"></tbody></table></div><details><summary>Ver respuesta JSON completa</summary><pre id="beneficiary-response-json"></pre></details></section>
 <div class="form-heading"><span class="step">2</span><h3>Datos del pago</h3></div><div class="form-grid three"><label>Importe en ARS<input id="payment-amount" required inputmode="decimal" placeholder="Ejemplo: 15.79" value="15.79"></label><label>Concepto<select id="payment-concept"><option value="VAR">VAR · Varios</option><option value="FAC">FAC · Factura</option><option value="HON">HON · Honorarios</option><option value="ALQ">ALQ · Alquiler</option><option value="CUO">CUO · Cuota</option><option value="EXP">EXP · Expensas</option><option value="PRE">PRE · Préstamos</option><option value="SEG">SEG · Seguro</option></select></label><label id="cheque-type-label" hidden>Tipo de eCheq<select id="cheque-type"><option value="ECHD">Diferido (ECHD)</option><option value="ECHC">Común (ECHC)</option></select></label><label id="cheque-date-label" hidden>Fecha de pago<input id="cheque-date" type="date"></label><div id="cheque-character-label" class="field-action" hidden><strong>Carácter del eCheq: A la orden</strong></div><label>Motivo / observaciones<input id="payment-note" value="PRUEBA HOMOLOGACION" required maxlength="60"></label></div>
 <details class="optional"><summary>Firmantes e identificador de la instrucción</summary><p class="muted">Los firmantes deben estar habilitados en BIE. Si se deja vacío, se omite el campo para que el banco resuelva el esquema vigente.</p><div class="form-grid"><label>Documento del firmante (opcional)<input id="signer-document" inputmode="numeric" pattern="[0-9]{1,11}"></label><label>Tipo de documento<select id="signer-type"><option>DNI</option><option>CUIT</option><option>CUIL</option><option>CDI</option><option>LC</option><option>PE</option><option>CI</option><option>LE</option></select></label><label class="wide">idOrigen<input id="payment-origin" required maxlength="36"></label></div><small>Conservá este ID para consultar la operación. No lo cambies para repetir un envío incierto.</small></details>
 <div class="form-footer"><button id="new-instruction" type="button" class="text-button">Nueva instrucción</button><button id="preview-payment" class="primary" type="submit">Revisar vista previa</button></div></form>
 <section id="payment-preview" class="panel" hidden><div class="panel-title"><h3>Revisión del envío</h3><span class="pill soft">Todavía sin enviar</span></div><div id="preview-summary" class="review-grid"></div><details><summary>Ver datos que recibirá el banco</summary><pre id="preview-json"></pre></details><label class="checkbox"><input id="confirm-payment" type="checkbox">Revisé cuenta, beneficiario, importe y fecha. Quiero enviar esta instrucción a firma.</label><button id="send-payment" class="primary" disabled>Enviar a firma en el banco</button></section>
 </section>
-<section id="view-ordenes" class="view" hidden>
-<div class="section-heading"><div><h2>Órdenes de pago desde Google Drive</h2><p>Lee únicamente archivos PDF cuyo nombre empiece por <strong>op-</strong> en la carpeta configurada.</p></div><button id="sync-drive-orders" class="secondary">Buscar órdenes nuevas</button></div>
+<section id="view-proveedores" class="view" hidden>
+<div class="section-heading"><div><h2>Órdenes de pago en PDF</h2><p>Leé únicamente archivos PDF cuyo nombre empiece por <strong>op-</strong> en la carpeta configurada.</p></div><button id="sync-drive-orders" class="secondary">Buscar órdenes nuevas</button></div>
 <div class="notice neutral">La importación es de solo lectura. Los PDF se deduplican por ID de Drive y contenido; proveedores sin coincidencia única, importes ambiguos y eCheqs sin fecha quedan para revisión y nunca se envían automáticamente. Cada operación requiere revisar la vista previa y confirmar el envío a firma.</div>
 <div class="panel"><div class="panel-title"><h3>Cuenta de débito</h3><span class="muted">Seleccioná la cuenta habilitada en Credicoop</span></div><label>Cuenta<select id="drive-debit-account" required></select></label></div>
 <div class="panel"><div class="panel-title"><h3>Órdenes encontradas</h3><span id="drive-order-count" class="muted">Todavía no se sincronizó</span></div><div class="table-wrap"><table><thead><tr><th>Archivo</th><th>Proveedor</th><th>Medio</th><th class="numeric">Importe</th><th>Estado</th><th>Acción</th></tr></thead><tbody id="drive-orders-body"></tbody></table></div></div>
 <section id="drive-order-preview" class="panel" hidden><div class="panel-title"><h3>Revisión de la orden</h3><span class="pill soft">Todavía sin enviar</span></div><div id="drive-preview-summary" class="review-grid"></div><details open><summary>Datos que recibirá el banco</summary><pre id="drive-preview-json"></pre></details><label class="checkbox"><input id="drive-order-confirm" type="checkbox">Revisé el proveedor, la cuenta, el importe y el medio. Quiero enviar esta orden a firma.</label><button id="drive-order-send" class="primary" disabled>Continuar para enviar a firma</button></section>
 </section>
-<section id="view-proveedores" class="view" hidden><div class="section-heading"><div><h2>Probá el circuito con tus órdenes</h2><p>Elegí una orden y reemplazá el destinatario en una instrucción de homologación.</p></div><button id="refresh-orders" class="secondary">Cargar ejemplos</button></div><div class="notice neutral">Las órdenes originales se conservan. Cada prueba usa un beneficiario del banco, un ID nuevo y un importe inicial de $15,79.</div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Orden</th><th>Proveedor original</th><th>Medio</th><th class="numeric">Importe original</th><th class="numeric">Retenciones</th><th>Prueba</th></tr></thead><tbody id="orders-body"></tbody></table></div></div><p class="muted">La fecha original de octubre no se reutiliza: los pagos de prueba se validan contra la fecha operativa del ambiente. CHE puede ser físico o eCheq; seleccioná expresamente el medio de la prueba.</p></section>
-<section id="view-seguimiento" class="view" hidden><div class="section-heading"><div><h2>Estado de una operación</h2><p>Consultá al banco y verificá después de completar la firma en BIE.</p></div></div><form id="status-form" class="panel form-grid"><label>Tipo<select id="status-kind"><option value="transferencia">Transferencia</option><option value="echeq">eCheq</option></select></label><label>ID operación del banco<input id="status-operation" placeholder="idOperacion"></label><label>idOrigen (transferencia o registro local)<input id="status-origin"></label><div class="field-action"><button type="submit" class="primary">Consultar en banco</button><button type="button" id="local-status" class="secondary">Ver registro local</button></div></form><div id="operation-result" class="panel" hidden><div class="panel-title"><h3>Respuesta de la operación</h3><span id="operation-state" class="pill"></span></div><pre id="operation-json"></pre></div></section>
+<section id="view-echeqs" class="view" hidden>
+<div class="section-heading"><div><h2>Listar y gestionar eCheqs</h2><p>Listá eCheqs generados o recibidos y gestioná (ACEPTAR, ENDOSAR, DEPOSITAR).</p></div><div><button id="echeq-refresh" class="secondary">Limpiar resultados</button> <button id="echeq-new-issuance" class="secondary">Emitir eCheq</button></div></div>
+<form id="echeq-list-form" class="panel form-grid">
+  <label>Gestión<select id="echeq-gestion"><option value="GENERADOS">GENERADOS</option><option value="RECIBIDOS">RECIBIDOS</option></select></label>
+  <label>Estado<select id="echeq-estado"><option value="TODOS">TODOS</option><option value="ACTIVO">ACTIVO</option><option value="PAGADO">PAGADO</option><option value="RECHAZADO">RECHAZADO</option></select></label>
+  <label>CUIT / CUIL / CDI<input id="echeq-cuit" inputmode="numeric" pattern="[0-9]{11}" maxlength="11"></label>
+  <label>Fecha pago desde<input id="echeq-fecha-desde" type="date"></label>
+  <label>Fecha pago hasta<input id="echeq-fecha-hasta" type="date"></label>
+  <label>Página<input id="echeq-pagina" type="number" value="1" min="1"></label>
+  <label>Límite<select id="echeq-limite"><option>20</option></select></label>
+  <div class="form-footer"><button id="echeq-list-button" class="primary" type="submit">Listar eCheqs</button></div>
+</form>
+<section id="echeq-emision" class="panel">
+  <div class="panel-title"><h3>Consultar emisión (idOperacion)</h3></div>
+  <div class="form-grid"><label>idOperacion<input id="echeq-emision-id" placeholder="idOperacion"></label><div class="field-action"><button id="echeq-emision-button" class="primary" type="button">Consultar emisión</button></div></div>
+  <pre id="echeq-emision-json" style="max-height:240px;overflow:auto;display:block;background:#fff; border:1px solid var(--line); padding:10px; border-radius:6px;"></pre>
+</section>
+<section id="echeq-list-result" class="panel" hidden>
+  <div class="panel-title"><h3>Resultados</h3><span id="echeq-list-count" class="muted">Sin consulta</span></div>
+  <pre id="echeq-list-json" style="max-height:320px;overflow:auto;"></pre>
+  <div class="table-wrap"><table><thead><tr><th>idCheque</th><th>numeroCheque</th><th>monto</th><th>fechaPago</th><th>estado</th></tr></thead><tbody id="echeq-list-body"></tbody></table></div>
+</section>
+<section id="echeq-management" class="panel" hidden>
+  <div class="panel-title"><h3>Gestionar eCheq</h3><span class="muted">Completá idCheque o cmc7 y elegí acción</span></div>
+  <p class="muted">Esta gestión se enviará con ConFirma al endpoint bancario y quedará pendiente de firma y activación en BIE.</p>
+  <form id="echeq-management-form" class="form-grid">
+    <label>idCheque<input id="manage-idCheque" maxlength="50"></label>
+    <label>cmc7<input id="manage-cmc7" maxlength="40"></label>
+    <label>CBU destino<select id="manage-cbu"></select></label>
+    <label>Acción<select id="manage-accion"><option value="ACEPTAR">ACEPTAR</option><option value="ENDOSAR">ENDOSAR</option><option value="DEPOSITAR">DEPOSITAR</option></select></label>
+    <label id="manage-monto-label">Monto<input id="manage-monto" inputmode="decimal"></label>
+    <label id="manage-fecha-label">Fecha de pago<input id="manage-fecha" type="date"></label>
+    <label id="manage-tipoendoso-label">Tipo de endoso<select id="manage-tipoendoso"><option value="NOM">NOM</option></select></label>
+    <label id="manage-benef-doc-label">Beneficiario (CUIT)<input id="manage-benef-doc" inputmode="numeric" maxlength="11"></label>
+    <div class="form-footer"><button id="echeq-preview-button" class="primary" type="button">Previsualizar gestión</button><button id="echeq-send-button" class="primary" type="button" disabled>Enviar gestión (ConFirma)</button></div>
+  </form>
+  <section id="echeq-management-preview" class="panel" hidden><div class="panel-title"><h3>Previsualización gestión</h3></div><pre id="echeq-management-json"></pre></section>
+</section>
+
+<section id="view-seguimiento" class="view" hidden><div class="section-heading"><div><h2>Estado de una operación</h2><p>Consultá al banco y verificá después de completar la firma en BIE.</p></div></div><form id="status-form" class="panel form-grid"><label>Tipo<select id="status-kind"><option value="transferencia">Transferencia</option><option value="echeq">eCheq</option></select></label><label>ID operación del banco<input id="status-operation" placeholder="idOperacion"></label><label>idOrigen (transferencia o registro local)<input id="status-origin"></label><div class="field-action"><button type="submit" class="primary">Consultar en banco</button><button type="button" id="status-last-operation" class="secondary">Consultar último envío</button><button type="button" id="local-status" class="secondary">Ver registro local</button></div></form><div id="operation-result" class="panel" hidden><div class="panel-title"><h3>Respuesta de la operación</h3><span id="operation-state" class="pill"></span></div><pre id="operation-json"></pre></div></section>
 <footer>API Empresas Credicoop · Consultas y preparación de pagos con firma en BIE</footer>
 </main><dialog id="send-dialog"><h2>Enviar esta instrucción a firma</h2><p id="dialog-summary"></p><p class="muted">La firma y activación se completan después en Banca Internet Empresa.</p><div class="dialog-actions"><button id="cancel-send" class="secondary">Volver a revisar</button><button id="confirm-send" class="primary">Confirmar envío</button></div></dialog>
 </body></html>

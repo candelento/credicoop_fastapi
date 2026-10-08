@@ -15,7 +15,7 @@ from app.config import Settings
 from app.journal import Journal, DuplicateInstruction
 from app.main import create_app
 from app.models import (
-    EcheqRequest, FciRedemptionRequest, FciSubscriptionRequest, TransferRequest,
+    EcheqRequest, FCI_COMPANY_CBU, FciRedemptionRequest, FciSubscriptionRequest, TransferRequest,
     fci_instruction_payload, instruction_payload, money,
 )
 
@@ -25,7 +25,8 @@ def cfg(tmp_path):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     path = tmp_path / 'test.pem'
     path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-    return Settings(_env_file=None, api_key='a'*40, private_key_path=path, journal_path=tmp_path/'ops.sqlite3')
+    return Settings(_env_file=None, api_key='a'*40, private_key_path=path, journal_path=tmp_path/'ops.sqlite3',
+                    fecha_operativa=date(2026, 8, 28))
 
 
 def transfer(origin='prueba-001'):
@@ -46,14 +47,14 @@ def fci_account():
 
 
 def fci_subscription(origin='fci-sub-001'):
-    return {'idOrigen': origin, 'cbuCuentaDebito': '1910119655111234183598',
+    return {'idOrigen': origin, 'cbuCuentaDebito': FCI_COMPANY_CBU,
                         'cuentaComitente': fci_account(), 'solicitudSuscripcion': {
                             'codigoFondo': 'FCAD', 'moneda': 'ARS', 'monto': '10000.00',
                             'avanzarTestVencido': False, 'aceptarRiesgoExcedido': False}}
 
 
 def fci_redemption(origin='fci-red-001'):
-    return {'idOrigen': origin, 'cbuCuentaCredito': '1910119655111234183598',
+    return {'idOrigen': origin, 'cbuCuentaCredito': FCI_COMPANY_CBU,
                         'cuentaComitente': fci_account(), 'solicitudRescate': {
                             'codigoFondo': 'FCAD', 'moneda': 'ARS', 'cuotapartes': '500'}}
 
@@ -162,7 +163,7 @@ def test_fci_routes_use_only_con_firma_and_documented_paths(cfg):
         if req.url.path.endswith('/cuentas-comitentes'):
             assert req.url.params['numeroAdherente'] == '661395'
             assert req.url.params['idOrigen']
-            return httpx.Response(200, json={'data': {'cuentasComitentes': [fci_account()]}})
+            return httpx.Response(200, json={'data': {'cuentasComitentes': [fci_account()], 'cuentasVinculadas': []}})
         if req.url.path.endswith('/fondos'):
             return httpx.Response(200, json={'data': {'detalleFondo': [{'codigo': 'FCAD'}]}})
         if req.url.path.endswith('/cuenta-comitente-saldos'):
@@ -190,7 +191,10 @@ def test_fci_routes_use_only_con_firma_and_documented_paths(cfg):
     b = CredicoopClient(cfg, httpx.MockTransport(handler), interval=0)
     with TestClient(create_app(cfg, b)) as api:
         headers = {'X-API-Key': 'a'*40}
-        assert api.get('/fci/cuentas-comitentes', headers=headers).status_code == 200
+        accounts = api.get('/fci/cuentas-comitentes', headers=headers)
+        assert accounts.status_code == 200
+        assert accounts.json()['data']['cuentasVinculadas'][0]['cbu'] == FCI_COMPANY_CBU
+        assert 'avisoCbuVinculado' in accounts.json()['data']
         assert api.get('/fci/fondos', headers=headers).status_code == 200
         assert api.post('/fci/saldos', headers=headers, json={'cuentaComitente': fci_account()}).status_code == 200
         movements = {'cuentaComitente': fci_account(), 'fechaDesde': '2026-08-01', 'fechaHasta': '2026-08-28'}

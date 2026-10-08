@@ -116,6 +116,15 @@ class Journal:
             rows = conn.execute('SELECT datos FROM ordenes_pago ORDER BY nombre_archivo, drive_file_id').fetchall()
         return [json.loads(row['datos']) for row in rows]
 
+    def retain_only_orders(self, drive_file_ids):
+        expected = tuple(dict.fromkeys(str(file_id) for file_id in drive_file_ids if file_id))
+        with self.connect() as conn:
+            if expected:
+                placeholders = ','.join('?' for _ in expected)
+                conn.execute(f'DELETE FROM ordenes_pago WHERE drive_file_id NOT IN ({placeholders})', expected)
+            else:
+                conn.execute('DELETE FROM ordenes_pago')
+
     def update_order_status(self, drive_file_id, status, reason=None):
         with self.connect() as conn:
             row = conn.execute(
@@ -131,3 +140,20 @@ class Journal:
                 (status, json.dumps(order, ensure_ascii=False),
                  datetime.now(timezone.utc).isoformat(), drive_file_id),
             )
+
+    def list_operations(self, tipo: str | None = None):
+        """Retorna todas las operaciones registradas o filtradas por tipo."""
+        with self.connect() as conn:
+            if tipo:
+                rows = conn.execute('SELECT tipo, id_origen, estado, resultado, actualizado FROM operaciones WHERE tipo=? ORDER BY actualizado DESC', (tipo,)).fetchall()
+            else:
+                rows = conn.execute('SELECT tipo, id_origen, estado, resultado, actualizado FROM operaciones ORDER BY actualizado DESC').fetchall()
+        result = []
+        for row in rows:
+            r = dict(row)
+            try:
+                r['resultado'] = json.loads(r['resultado']) if r['resultado'] else None
+            except Exception:
+                r['resultado'] = r['resultado']
+            result.append(r)
+        return result

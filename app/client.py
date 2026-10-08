@@ -1,24 +1,46 @@
 import asyncio
 import base64
+from contextvars import ContextVar
 import json
 import ssl
 import time
 from datetime import date, timedelta
+from pathlib import Path
 from uuid import uuid4
 import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from .config import Settings
+from .evidence import EvidenceRecorder, exchange_snapshot
+
+BANK_EXCHANGES: ContextVar[list[dict] | None] = ContextVar('bank_exchanges', default=None)
 
 CON_FIRMA_POSTS = {
     '/api/transferencias/v1/ConFirma/transferencia',
     '/api/echeq/v1/ConFirma/emision',
     '/api/fci/v1/ConFirma/suscripcion',
     '/api/fci/v1/ConFirma/rescate',
+    '/api/echeq/v1/ConFirma/gestion',
+}
+MUTATION_POSTS = {
+    '/api/transferencias/v1/beneficiario',
+    '/api/echeq/v1/beneficiario',
 }
 QUERY_POSTS = {
     '/api/fci/v1/cuenta-comitente-saldos',
     '/api/fci/v1/cuenta-comitente-movimientos',
+    '/api/echeq/v1/lista-cheques',
+}
+ENDPOINT_INFO = {
+    '/api/cuentas/v1/listaCuentas': ('Consultar cuentas', 'cuentas'),
+    '/api/transferencias/v1/beneficiario': ('Alta de beneficiario de transferencia', 'beneficiarioTransferencia'),
+    '/api/echeq/v1/beneficiario': ('Alta de beneficiario de eCheq', 'beneficiarioEcheq'),
+    '/api/transferencias/v1/ConFirma/transferencia': ('Transferir con firma', 'transferenciasConFirma'),
+    '/api/transferencias/v1/transferencia': ('Consultar transferencia', 'transferenciasConFirma'),
+    '/api/echeq/v1/ConFirma/emision': ('Emitir eCheq con firma', 'echeqConFirma'),
+    '/api/echeq/v1/emision': ('Consultar emisión de eCheq', 'echeqConFirma'),
+    '/api/echeq/v1/lista-cheques': ('Listar eCheqs', 'echeqConFirma'),
+    '/api/echeq/v1/ConFirma/gestion': ('Gestionar eCheqs con firma', 'echeqConFirma'),
 }
 
 
@@ -30,7 +52,7 @@ class BankError(Exception):
 
 def redact(value):
     if isinstance(value, dict):
-        return {k: ('[REDACTADO]' if any(s in k.lower() for s in ('token', 'assertion', 'private', 'password', 'authorization')) else redact(v)) for k, v in value.items()}
+        return {k: ('[REDACTADO]' if any(s in k.lower() for s in ('token', 'assertion', 'private', 'password', 'authorization', 'x-api-key')) else redact(v)) for k, v in value.items()}
     if isinstance(value, list):
         return [redact(x) for x in value]
     return value
@@ -58,6 +80,7 @@ class CredicoopClient:
         self.settings = settings
         context = ssl.create_default_context(cafile=str(settings.ca_bundle) if settings.ca_bundle else None)
         self.http = httpx.AsyncClient(timeout=settings.timeout, verify=context, transport=transport, follow_redirects=False)
+        self.evidence = EvidenceRecorder(Path('evidencias')) if transport is None else None
         self._token = None
         self._expiry = 0
         self._auth_lock = asyncio.Lock()
@@ -67,6 +90,29 @@ class CredicoopClient:
 
     async def close(self):
         await self.http.aclose()
+
+    async def _send(self, request, function: str, scope: str, *, ambiguous=False):
+        try:
+            response = await self.http.send(request)
+        except BaseException as exc:
+            exchanges = BANK_EXCHANGES.get()
+            if exchanges is not None:
+                exchanges.append(exchange_snapshot(
+                    request, error=f'{type(exc).__name__}: {exc}',
+                ))
+            if self.evidence:
+                self.evidence.record(
+                    function, scope, request,
+                    error=f'{type(exc).__name__}: {exc}',
+                    ambiguous=ambiguous,
+                )
+            raise
+        exchanges = BANK_EXCHANGES.get()
+        if exchanges is not None:
+            exchanges.append(exchange_snapshot(request, response))
+        if self.evidence:
+            self.evidence.record(function, scope, request, response, ambiguous=ambiguous)
+        return response
 
     async def _pace(self):
         # Máximo global 50/minuto; se ejecuta en un solo proceso/worker.
@@ -83,12 +129,13 @@ class CredicoopClient:
             assertion = signed_assertion(self.settings)
             await self._pace()
             try:
-                response = await self.http.post(self.settings.token_url, data={
+                request = self.http.build_request('POST', self.settings.token_url, data={
                     'grant_type': 'client_credentials', 'client_id': self.settings.client_id,
                     'scope': self.settings.scopes,
                     'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
                     'client_assertion': assertion,
-                })
+                }, headers={'Accept': 'application/json'})
+                response = await self._send(request, 'Autenticación OAuth', self.settings.scopes)
             except httpx.HTTPError:
                 raise BankError('No se pudo contactar el servicio de autenticación del banco.', 503) from None
             if response.status_code != 200:
@@ -110,15 +157,26 @@ class CredicoopClient:
     async def request(self, method, path, *, params=None, body=None):
         if not path.startswith('/api/'):
             raise ValueError('Ruta del banco inválida.')
-        if method == 'POST' and path not in CON_FIRMA_POSTS | QUERY_POSTS:
+        if method == 'POST' and path not in CON_FIRMA_POSTS | MUTATION_POSTS | QUERY_POSTS:
             raise ValueError('Sólo se permiten consultas y operaciones ConFirma.')
-        transaction = method == 'POST' and path in CON_FIRMA_POSTS
+        transaction = method == 'POST' and path in (CON_FIRMA_POSTS | MUTATION_POSTS)
+        function, scope = ENDPOINT_INFO.get(path, (path, self.settings.scopes))
+        if path.startswith('/api/cuentas/v1/') and path.endswith('/movimientos'):
+            function, scope = 'Consultar movimientos', 'cuentas'
+        elif path.startswith('/api/transferencias/v1/beneficiario/'):
+            function, scope = 'Consultar beneficiario de transferencia', 'beneficiarioTransferencia'
+        elif path.startswith('/api/echeq/v1/beneficiario/'):
+            function, scope = 'Consultar beneficiario de eCheq', 'beneficiarioEcheq'
         for attempt in range(2):
             token = await self.token()
             await self._pace()
             try:
-                response = await self.http.request(method, self.settings.base_url.rstrip('/') + path,
-                    params=params, json=body, headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/json'})
+                request = self.http.build_request(
+                    method, self.settings.base_url.rstrip('/') + path,
+                    params=params, json=body,
+                    headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/json'},
+                )
+                response = await self._send(request, function, scope, ambiguous=transaction)
             except httpx.HTTPError:
                 raise BankError('No se obtuvo respuesta del banco. Consultar el estado antes de repetir.',
                                 504, ambiguous=transaction) from None

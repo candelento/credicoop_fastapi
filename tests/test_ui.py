@@ -11,12 +11,21 @@ def test_home_assets_and_test_data_require_key():
         home = api.get('/')
         assert home.status_code == 200 and 'text/html' in home.headers['content-type']
         assert 'Preparación de pagos' in home.text
-        assert 'Órdenes de pago desde Google Drive' in home.text
+        assert 'Órdenes de pago en PDF' in home.text
         assert 'Fondos comunes de inversión 1810' in home.text
         assert 'frame-ancestors' in home.headers['content-security-policy']
         assert DEMO_KEY not in home.text
-        assert api.get('/static/app.js').status_code == 200
-        assert api.get('/static/style.css').status_code == 200
+        app_js = api.get('/static/app.js')
+        styles = api.get('/static/style.css')
+        assert app_js.status_code == 200 and 'method-badge' in app_js.text
+        assert styles.status_code == 200 and '.exchange-card-request' in styles.text
+        assert 'Request / response a la API del banco' in home.text
+        assert '/api/fci/v1/fondos' in home.text
+        assert 'Órdenes PDF' not in home.text
+        assert 'Datos del beneficiario devueltos por el banco' in home.text
+        assert 'beneficiary-response-fields' in home.text
+        assert 'beneficiary-response-json' in home.text
+        assert 'Consultar último envío' in home.text
         assert api.get('/homologacion/beneficiarios').status_code == 401
         h = {'X-API-Key': DEMO_KEY}
         assert api.get('/ordenes-pago', headers=h).status_code == 404
@@ -62,7 +71,10 @@ def test_demo_fci_is_simulated_and_uses_fixed_signer():
         config = api.get('/configuracion', headers=h).json()
         assert config['fci_scope_habilitado']
         assert config['fci_firmante_dni'] == '44379155'
-        assert api.get('/fci/cuentas-comitentes', headers=h).json()['data']['cuentasComitentes']
+        accounts = api.get('/fci/cuentas-comitentes', headers=h).json()
+        assert accounts['data']['cuentasComitentes']
+        assert accounts['data']['cuentasVinculadas'][0]['cbu'] == '1910054455005400309496'
+        assert 'avisoCbuVinculado' in accounts['data']
         assert api.get('/fci/fondos', headers=h).json()['data']['detalleFondo'][0]['codigo'] == 'FCAD'
         account = {'tipoCuenta': 'ORDI', 'sucursalCuenta': '119', 'numeroCuenta': '011123/9'}
         assert api.post('/fci/saldos', headers=h, json={'cuentaComitente': account}).json()['simulacion']
@@ -70,7 +82,7 @@ def test_demo_fci_is_simulated_and_uses_fixed_signer():
         assert api.post('/fci/movimientos', headers=h, json=movement_body).json()['simulacion']
         detail = api.get('/fci/movimientos/detalle?tipo=RESC&numero=500&sucursal=0123&formula=7018151', headers=h)
         assert detail.status_code == 200 and detail.json()['simulacion']
-        body = {'idOrigen': 'demo-fci-sub-001', 'cbuCuentaDebito': '1910000000000000000000',
+        body = {'idOrigen': 'demo-fci-sub-001', 'cbuCuentaDebito': '1910054455005400309496',
                 'cuentaComitente': account, 'solicitudSuscripcion': {
                     'codigoFondo': 'FCAD', 'moneda': 'ARS', 'monto': '100.00',
                     'avanzarTestVencido': False, 'aceptarRiesgoExcedido': False}}
