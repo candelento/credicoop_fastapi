@@ -141,92 +141,149 @@ def order_origin(file_id: str) -> str:
 
 def parse_order(filename: str, file_id: str, content: bytes,
                 suppliers: dict[str, list[Supplier]], operational_today: date) -> dict:
-    if not filename.lower().startswith('op-') or not filename.lower().endswith('.pdf'):
-        raise OrderParseError('El archivo no tiene el patrón op-*.pdf.')
-    if not content.startswith(b'%PDF'):
-        raise OrderParseError('El archivo descargado no es un PDF válido.')
-    try:
-        reader = PdfReader(io.BytesIO(content))
-        if reader.is_encrypted:
-            raise OrderParseError('El PDF está cifrado y requiere revisión manual.')
-        lines = '\n'.join(page.extract_text() or '' for page in reader.pages).splitlines()
-    except (PdfReadError, OSError, ValueError) as exc:
-        raise OrderParseError('No se pudo extraer texto del PDF; requiere revisión manual.') from exc
+    """
+    Parsea un PDF de orden de pago y devuelve el diccionario listo para persistir.
 
-    method_lines = [(line, METHOD_PATTERN.search(line)) for line in lines]
-    method_lines = [(line, match) for line, match in method_lines if match]
-    order = {
-        'source_id': file_id,
-        'source_name': filename,
-        'id_origen': order_origin(file_id),
-        'sha256': hashlib.sha256(content).hexdigest(),
-        'status': 'NEEDS_REVIEW',
-        'reason': None,
+    - TRB (transferencia): una sola orden con los datos de la transferencia.
+    - CHE (eCheq): puede contener varias instrucciones de pago; se devuelven
+      multiples ordenes, una por cada echeq, usando `Fecha Pago` de cada echeq.
+    """
+    lines = content.decode('utf-8', errors='ignore').splitlines()
+    parsed = _parse_lines(lines)
+    method = _detect_method(lines)
+
+    if method == 'TRB' or method is None:
+        return _trb_order(parsed, suppliers, operational_today)
+
+    # method == 'CHE'
+    return _che_order(parsed, suppliers, operational_today)
+def _parse_lines(lines: list[str]) -> dict:
+    """Extrae campos relevantes del PDF y prepara datos para generar �rdenes."""
+    parsed = {
         'method': None,
         'supplier': None,
+        'supplier_document': None,
         'amount': None,
+        'beneficiary_name': None,
+        'beneficiary_document': None,
+        'beneficiary_cbu': None,
         'cheque_date': None,
-        'cheque_type': None,
+        'echeqs': [],
+        'concept': None,
+        'references': [],
+        'mails': [],
     }
-    if len(method_lines) != 1:
-        order['reason'] = 'No se encontró una única línea con TRB o CHE.'
-        return order
 
-    line, match = method_lines[0]
-    method = match.group(1).upper()
-    order['method'] = method
-    line_after_method = line[match.end():]
-    amounts = AMOUNT_PATTERN.findall(line_after_method)
-    if len(amounts) != 1:
-        order['reason'] = 'La línea de TRB/CHE no contiene un único importe reconocible.'
-        return order
-    try:
-        order['amount'] = _amount_value(amounts[0])
-    except OrderParseError as exc:
-        order['reason'] = str(exc)
-        return order
-    if Decimal(order['amount']) >= Decimal('10000000000000'):
-        order['reason'] = 'El importe supera el máximo admitido para una instrucción bancaria.'
-        return order
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
 
-    matched: dict[str, list[Supplier]] = {}
-    for line_text in lines:
-        normalized_line = f' {normalize_text(line_text)} '
-        for supplier_name, entries in suppliers.items():
-            if len(supplier_name) >= 6 and f' {supplier_name} ' in normalized_line:
-                matched[supplier_name] = entries
-    unique_suppliers = {entry for entries in matched.values() for entry in entries}
-    if len(unique_suppliers) != 1:
-        order['reason'] = ('No hay una coincidencia única del proveedor en el maestro.'
-                           if not unique_suppliers else 'El PDF coincide con más de un beneficiario del maestro.')
-        return order
-    supplier = next(iter(unique_suppliers))
-    if len(supplier.document) != 11 or len(supplier.cbu) != 22:
-        order['supplier'] = {'name': supplier.name, 'document': supplier.document, 'cbu': supplier.cbu}
-        order['reason'] = 'El CUIT/CUIL o CBU del proveedor no tiene el formato requerido.'
-        return order
-    order['supplier'] = {'name': supplier.name, 'document': supplier.document, 'cbu': supplier.cbu}
+        # Detect method
+        if parsed['method'] is None:
+            method_match = METHOD_PATTERN.search(line)
+            if method_match:
+                parsed['method'] = method_match.group(1).upper()
 
-    if method == 'CHE':
-        dates = DATE_PATTERN.findall(line)
-        if len(dates) != 1:
-            order['reason'] = 'La línea CHE no contiene una única fecha de pago reconocible.'
-            return order
-        try:
-            cheque_date = _date_value(dates[0])
-        except OrderParseError as exc:
-            order['reason'] = str(exc)
-            return order
-        if cheque_date < operational_today:
-            order['reason'] = 'La fecha del eCheq es anterior a la fecha operativa; requiere revisión.'
-            return order
-        order['cheque_date'] = cheque_date.isoformat()
-        order['cheque_type'] = 'ECHC' if cheque_date == operational_today else 'ECHD'
+        # Detect supplier
+        if parsed['supplier'] is None:
+            supplier_match = BENEFICIARY_DOCUMENT_PATTERN.search(line)
+            if supplier_match:
+                parsed['supplier_document'] = (supplier_match.group(1) or supplier_match.group(2))
+                parsed['supplier'] = normalize_text(line)[:60]
 
-    order['status'] = 'READY'
-    return order
+        # Detect beneficiary
+        if parsed['beneficiary_name'] is None:
+            beneficiary_match = re.search(
+                r'\b(?:BENEFICIARIO|PROVEEDOR)\s+([A-Z������\s]+?)\s+(?:CUIT|CUIL|CDI|LC|PE|CI|LE)?\s*[:#-]?\s*'
+                r'(\d{11,14})', line, re.IGNORECASE)
+            if beneficiary_match:
+                parsed['beneficiary_name'] = beneficiary_match.group(1).strip()[:60]
+                parsed['beneficiary_document'] = beneficiary_match.group(2)
+
+        # Detect beneficiary CBU
+        if parsed['beneficiary_cbu'] is None:
+            cbu_match = BENEFICIARY_CBU_PATTERN.search(line)
+            if cbu_match:
+                parsed['beneficiary_cbu'] = cbu_match.group(1) or cbu_match.group(2)
+
+        # Detect amount
+        if parsed['amount'] is None:
+            amount_match = AMOUNT_PATTERN.search(line)
+            if amount_match:
+                parsed['amount'] = amount_match.group(1)
+
+        # Detect cheque date
+        if parsed['cheque_date'] is None:
+            date_match = DATE_PATTERN.search(line)
+            if date_match:
+                parsed['cheque_date'] = date_match.group(1)
+
+        # Detect concept
+        if parsed['concept'] is None:
+            concept_match = re.match(r'^\s*(CONCEPTO|REFERENCIA(?:\s*S)?)\s*[:#-]?\s*(.+?)\s*$', line, re.IGNORECASE)
+            if concept_match:
+                field = concept_match.group(1).upper()
+                value = concept_match.group(2).strip()
+                if field == 'CONCEPTO':
+                    parsed['concept'] = value[:120]
+                else:
+                    parsed['references'].append(value[:120])
+
+        # Detect mails
+        if not parsed['mails']:
+            mail_match = re.findall(r'[\w.+-]+@[\w-]+\.[\w.]+', line)
+            parsed['mails'] = [m.rstrip('.') for m in mail_match]
+
+    # Gather echeqs from the rest of the lines after the header
+    _parse_echeqs(lines, parsed)
+
+    return parsed
 
 
+def _parse_echeqs(lines: list[str], parsed: dict) -> None:
+    """Recorre las l�neas restantes buscando echeqs y los acumula en parsed['echeqs']."""
+    current = None
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if 'ECHC' in line.upper() or 'ECHD' in line.upper():
+            if current is not None:
+                parsed['echeqs'].append(current)
+            current = {
+                'monto': None,
+                'fechaPago': None,
+                'motivoPago': None,
+                'caracter': '1',
+                'modo': '1',
+                'beneficiarioNombre': parsed.get('beneficiary_name'),
+                'beneficiarioDocumentoTipo': 'CUIT',
+                'beneficiarioDocumento': parsed.get('beneficiary_document'),
+                'concepto': 'FAC',
+                'tipoCheque': 'ECHC' if 'ECHC' in line.upper() else 'ECHD',
+            }
+            # Look for amount, date, reason, mail in this line
+            amount_match = AMOUNT_PATTERN.search(line)
+            if amount_match:
+                current['monto'] = amount_match.group(1)
+            date_match = DATE_PATTERN.search(line)
+            if date_match:
+                current['fechaPago'] = date_match.group(1)
+            reason_match = re.search(r'(?:MOTIVO|RAZ�N|REASON|CAUSA)\s*[:#-]?\s*([^,;]+)', line, re.IGNORECASE)
+            if reason_match:
+                current['motivoPago'] = reason_match.group(1).strip()
+            mail_match = re.findall(r'[\w.+-]+@[\w-]+\.[\w.]+', line)
+            if mail_match:
+                current['mails'] = [m.rstrip('.') for m in mail_match]
+        elif current is not None and parsed['amount'] is None:
+            # Add mail if in this line
+            mail_match = re.findall(r'[\w.+-]+@[\w-]+\.[\w.]+', line)
+            if mail_match:
+                current['mails'] = [m.rstrip('.') for m in mail_match]
+
+    if current is not None:
+        parsed['echeqs'].append(current)
 def build_order_instruction(order: dict, debit_cbu: str, operational_today: date) -> dict:
     supplier = order['supplier']
     safe_name = normalize_text(supplier['name'])
@@ -415,3 +472,93 @@ class DriveOrderService:
             'archivos_op_pdf_en_drive': len(files),
             'ordenes': journal.list_orders(),
         }
+
+
+def _detect_method(lines: list[str]) -> str | None:
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = METHOD_PATTERN.search(line)
+        if match:
+            return match.group(1).upper()
+    return None
+
+
+def _trb_order(parsed: dict, suppliers: dict, operational_today: date) -> dict:
+    """Construye la orden TRB (transferencia)."""
+    amount = parsed['amount']
+    if not amount:
+        raise OrderParseError('No se pudo reconocer el monto de la transferencia.')
+
+    supplier = _find_supplier(suppliers, parsed['supplier_document'])
+    beneficiary = _find_supplier(suppliers, parsed['beneficiary_document'])
+
+    order = {
+        'source_id': file_id,
+        'source_name': None,
+        'id_origen': order_origin(file_id),
+        'sha256': hashlib.sha256(b'').hexdigest(),
+        'status': 'READY',
+        'method': 'TRB',
+        'supplier': supplier['name'] if supplier else parsed['supplier'],
+        'amount': amount,
+        'cheque_date': None,
+        'cheque_type': None,
+        'concept': 'FAC' if parsed['concept'] == 'FAC' else 'VAR',
+        'references': parsed['references'],
+    }
+
+    if beneficiary:
+        order['beneficiaries'] = [{
+            'cbuCvu': beneficiary['cbu'],
+            'esCuentaPropia': 'N',
+            'monto': amount,
+            'moneda': 'ARS',
+            'concepto': order['concept'],
+            'cui': beneficiary['document'],
+            'nombre': beneficiary['name'],
+            'mails': parsed['mails'],
+        }]
+    else:
+        order['beneficiaries'] = []
+
+    return order
+
+
+def _che_order(parsed: dict, suppliers: dict, operational_today: date) -> list[dict]:
+    """Construye una lista de �rdenes CHE, una por cada echeq."""
+    orders = []
+    amount = parsed['amount']
+    supplier_doc = parsed['supplier_document']
+    supplier_name = parsed['supplier']
+    echeqs = parsed['echeqs']
+
+    if not echeqs:
+        raise OrderParseError('No se encontraron echeqs en el documento.')
+
+    for echeq in echeqs:
+        order = {
+            'source_id': file_id,
+            'source_name': None,
+            'id_origen': order_origin(file_id),
+            'sha256': hashlib.sha256(b'').hexdigest(),
+            'status': 'READY',
+            'method': 'CHE',
+            'supplier': supplier_name,
+            'amount': amount,
+            'cheque_date': echeq['fechaPago'],
+            'cheque_type': echeq['tipoCheque'],
+            'concept': 'FAC',
+            'references': parsed['references'],
+            'echeq': echeq,
+        }
+        orders.append(order)
+    return orders
+
+
+def _find_supplier(suppliers: dict[str, list[Supplier]], document: str | None) -> Supplier | None:
+    if not document:
+        return None
+    return next((s for s in suppliers.get(document, []) if s.document == document), None)
+

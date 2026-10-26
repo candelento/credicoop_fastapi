@@ -1,0 +1,90 @@
+
+
+
+def _detect_method(lines: list[str]) -> str | None:
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = METHOD_PATTERN.search(line)
+        if match:
+            return match.group(1).upper()
+    return None
+
+
+def _trb_order(parsed: dict, suppliers: dict, operational_today: date) -> dict:
+    """Construye la orden TRB (transferencia)."""
+    amount = parsed['amount']
+    if not amount:
+        raise OrderParseError('No se pudo reconocer el monto de la transferencia.')
+
+    supplier = _find_supplier(suppliers, parsed['supplier_document'])
+    beneficiary = _find_supplier(suppliers, parsed['beneficiary_document'])
+
+    order = {
+        'source_id': file_id,
+        'source_name': None,
+        'id_origen': order_origin(file_id),
+        'sha256': hashlib.sha256(b'').hexdigest(),
+        'status': 'READY',
+        'method': 'TRB',
+        'supplier': supplier['name'] if supplier else parsed['supplier'],
+        'amount': amount,
+        'cheque_date': None,
+        'cheque_type': None,
+        'concept': 'FAC' if parsed['concept'] == 'FAC' else 'VAR',
+        'references': parsed['references'],
+    }
+
+    if beneficiary:
+        order['beneficiaries'] = [{
+            'cbuCvu': beneficiary['cbu'],
+            'esCuentaPropia': 'N',
+            'monto': amount,
+            'moneda': 'ARS',
+            'concepto': order['concept'],
+            'cui': beneficiary['document'],
+            'nombre': beneficiary['name'],
+            'mails': parsed['mails'],
+        }]
+    else:
+        order['beneficiaries'] = []
+
+    return order
+
+
+def _che_order(parsed: dict, suppliers: dict, operational_today: date) -> list[dict]:
+    """Construye una lista de órdenes CHE, una por cada echeq."""
+    orders = []
+    amount = parsed['amount']
+    supplier_doc = parsed['supplier_document']
+    supplier_name = parsed['supplier']
+    echeqs = parsed['echeqs']
+
+    if not echeqs:
+        raise OrderParseError('No se encontraron echeqs en el documento.')
+
+    for echeq in echeqs:
+        order = {
+            'source_id': file_id,
+            'source_name': None,
+            'id_origen': order_origin(file_id),
+            'sha256': hashlib.sha256(b'').hexdigest(),
+            'status': 'READY',
+            'method': 'CHE',
+            'supplier': supplier_name,
+            'amount': amount,
+            'cheque_date': echeq['fechaPago'],
+            'cheque_type': echeq['tipoCheque'],
+            'concept': 'FAC',
+            'references': parsed['references'],
+            'echeq': echeq,
+        }
+        orders.append(order)
+    return orders
+
+
+def _find_supplier(suppliers: dict[str, list[Supplier]], document: str | None) -> Supplier | None:
+    if not document:
+        return None
+    return next((s for s in suppliers.get(document, []) if s.document == document), None)

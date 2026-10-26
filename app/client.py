@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import ssl
 import time
 from datetime import date, timedelta
@@ -13,13 +14,17 @@ from .config import Settings
 CON_FIRMA_POSTS = {
     '/api/transferencias/v1/ConFirma/transferencia',
     '/api/echeq/v1/ConFirma/emision',
+    '/api/echeq/v1/ConFirma/gestion',
     '/api/fci/v1/ConFirma/suscripcion',
     '/api/fci/v1/ConFirma/rescate',
 }
 QUERY_POSTS = {
+    '/api/echeq/v1/lista-cheques',
     '/api/fci/v1/cuenta-comitente-saldos',
     '/api/fci/v1/cuenta-comitente-movimientos',
 }
+
+logger = logging.getLogger(__name__)
 
 
 class BankError(Exception):
@@ -34,6 +39,40 @@ def redact(value):
     if isinstance(value, list):
         return [redact(x) for x in value]
     return value
+
+
+def response_shape(value, depth=0):
+    """Describe response structure without logging account numbers or other values."""
+    if depth >= 5:
+        return type(value).__name__
+    if isinstance(value, dict):
+        return {str(key): response_shape(item, depth + 1) for key, item in list(value.items())[:40]}
+    if isinstance(value, list):
+        return {'tipo': 'lista', 'cantidad': len(value),
+                'primer_elemento': response_shape(value[0], depth + 1) if value else None}
+    if value is None:
+        return 'null'
+    return type(value).__name__
+
+
+def is_movements_query(path: str) -> bool:
+    # Sólo consultas de movimientos: cuentas corrientes (/movimientos) y FCI (lista y detalle).
+    return path.endswith('/movimientos') or 'cuenta-comitente-movimiento' in path
+
+
+def log_json(value) -> str:
+    try:
+        return json.dumps(redact(value), ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return repr(value)
+
+
+def log_response(response) -> str:
+    try:
+        return log_json(response.json())
+    except ValueError:
+        # Respuesta no JSON: se registra el texto (acotado) para poder depurar.
+        return log_json({'texto': response.text[:2000]})
 
 
 def signed_assertion(settings: Settings) -> str:
@@ -103,8 +142,9 @@ class CredicoopClient:
             except (ValueError, KeyError, TypeError):
                 raise BankError('Respuesta de autenticación inválida.', 502) from None
             # Usar el vencimiento recibido, sin persistir ni exponer el token.
+            refresh_in = max(0, ttl - min(30, ttl / 2))
             self._token = token
-            self._expiry = time.monotonic() + max(0, ttl - min(30, ttl / 2))
+            self._expiry = time.monotonic() + refresh_in
             return token
 
     async def request(self, method, path, *, params=None, body=None):
@@ -113,15 +153,27 @@ class CredicoopClient:
         if method == 'POST' and path not in CON_FIRMA_POSTS | QUERY_POSTS:
             raise ValueError('Sólo se permiten consultas y operaciones ConFirma.')
         transaction = method == 'POST' and path in CON_FIRMA_POSTS
+        trace = self.settings.log_movimientos and is_movements_query(path)
         for attempt in range(2):
             token = await self.token()
             await self._pace()
+            if trace:
+                logger.info('REQUEST movimientos [%s %s] intento=%s params=%s body=%s',
+                            method, path, attempt + 1, log_json(params), log_json(body))
+            started = time.monotonic()
             try:
                 response = await self.http.request(method, self.settings.base_url.rstrip('/') + path,
                     params=params, json=body, headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/json'})
             except httpx.HTTPError:
+                if trace:
+                    logger.info('RESPONSE movimientos [%s %s] sin respuesta del banco tras %.0f ms',
+                                method, path, (time.monotonic() - started) * 1000)
                 raise BankError('No se obtuvo respuesta del banco. Consultar el estado antes de repetir.',
                                 504, ambiguous=transaction) from None
+            if trace:
+                logger.info('RESPONSE movimientos [%s %s] status=%s tras %.0f ms: %s',
+                            method, path, response.status_code, (time.monotonic() - started) * 1000,
+                            log_response(response))
             # Reautenticación sólo de lecturas. Nunca reintentar pagos automáticamente.
             if response.status_code == 401:
                 async with self._auth_lock:
@@ -148,12 +200,27 @@ class CredicoopClient:
         raise BankError('No se pudo autenticar la consulta.')
 
     async def accounts(self):
-        return await self.request('GET', '/api/cuentas/v1/listaCuentas')
+        return await self.request('GET', '/api/cuentas/v2/listaCuentas')
 
     async def fci_accounts(self):
-        return await self.request('GET', '/api/fci/v1/cuentas-comitentes', params={
-            'numeroAdherente': self.settings.adherente, 'idOrigen': str(uuid4()),
-        })
+        logger.info('REQUEST FCI cuentas-comitentes: GET /api/fci/v1/cuentas-comitentes; fciConFirma configurado=%s',
+                    'fciConFirma' in self.settings.scopes.split())
+        try:
+            result = await self.request('GET', '/api/fci/v1/cuentas-comitentes', params={
+                'numeroAdherente': self.settings.adherente, 'idOrigen': str(uuid4()),
+            })
+        except BankError as exc:
+            logger.warning('RESPONSE FCI cuentas-comitentes: consulta fallida; estado_local=%s; estructura=%s',
+                           exc.status, log_json(response_shape(exc.details)))
+            raise
+        shape = response_shape(result)
+        logger.info('RESPONSE FCI cuentas-comitentes: estructura=%s', log_json(shape))
+        data = result.get('data')
+        if (not isinstance(data, dict) or not isinstance(data.get('cuentasComitentes'), list)
+                or ('cuentasVinculadas' in data
+                    and not isinstance(data.get('cuentasVinculadas'), list))):
+            logger.warning('FCI cuentas-comitentes: formato diferente al documentado; estructura=%s', log_json(shape))
+        return result
 
     async def fci_funds(self):
         return await self.request('GET', '/api/fci/v1/fondos', params={
@@ -183,7 +250,7 @@ class CredicoopClient:
             params = {'fechaDesde': a.strftime('%Y%m%d'), 'fechaHasta': b.strftime('%Y%m%d')}
             if code:
                 params['codOperativo'] = code
-            data = await self.request('GET', f'/api/cuentas/v1/{account}/movimientos', params=params)
+            data = await self.request('GET', f'/api/cuentas/v2/{account}/movimientos', params=params)
             records = data.get('consMovCtas')
             if not isinstance(records, list) or any(not isinstance(x, dict) for x in records):
                 raise BankError('Falta la lista consMovCtas en la respuesta del banco.')

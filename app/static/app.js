@@ -1,21 +1,51 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = { key:'', config:null, accounts:[], beneficiaries:[], orders:[], driveOrders:[], driveOrderPreview:null, kind:'transferencia', preview:null, fciPreview:null, fciAccounts:[], fciFunds:[], movements:null, busy:false, selectedOrder:null };
+const state = { key:'', authenticated:false, user:null, config:null, accounts:[], beneficiaries:[], driveOrders:[], driveOrderPreview:null, selectedDriveOrders:[], batchOrderPreview:null, kind:'transferencia', preview:null, fciPreview:null, fciAccounts:[], fciFunds:[], movements:null, movementPage:1, busy:false };
 const money = (v, currency='ARS') => new Intl.NumberFormat('es-AR',{style:'currency',currency,minimumFractionDigits:2}).format(Number(v));
 const dateLabel = v => !v ? '—' : /^\d{8}$/.test(v) ? `${v.slice(6,8)}/${v.slice(4,6)}/${v.slice(0,4)}` : /^\d{4}-\d{2}-\d{2}$/.test(v) ? v.split('-').reverse().join('/') : String(v);
+const dateTimeLabel = v => {const match=String(v||'').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);return match?`${match[3]}/${match[2]}/${match[1]} ${match[4]}:${match[5]}`:dateLabel(v);};
+const operationSummary = item => item.resumen||{};
+const operationLabel = kind => ({transferencia:'Transferencia · TRB',echeq:'eCheq · CHE',echeq_gestion:'Gestión eCheq',fci_suscripcion:'Suscripción FCI',fci_rescate:'Rescate FCI'}[kind]||kind||'—');
+const operationBeneficiary = item => operationSummary(item).beneficiario||item.resultado?.data?.beneficiarioNombre||item.resultado?.data?.nombre||'—';
+const operationAmount = item => {const value=operationSummary(item).importe;return value?money(value,operationSummary(item).moneda||'ARS'):'—';};
+const localDate = value => `${value.getFullYear()}-${String(value.getMonth()+1).padStart(2,'0')}-${String(value.getDate()).padStart(2,'0')}`;
 const normalName = v => v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9 ]/g,'').trim().toUpperCase();
-const message = (text,type='neutral') => { $('notice').textContent=text; $('notice').className=`notice ${type}`; $('notice').hidden=false; };
+const message = (text,type='neutral') => {
+  const notice=document.querySelector('.order-dialog[open] .review-notice')||$('notice');
+  notice.textContent=text;notice.className=`${notice.id==='notice'?'':'review-notice '}notice ${type}`;notice.hidden=false;
+};
 const newId = () => crypto.randomUUID();
 const el = (tag,text,cls) => {const x=document.createElement(tag);if(text!==undefined)x.textContent=String(text);if(cls)x.className=cls;return x;};
+let reauthTimer=null,reauthDeadline=0,sessionLocked=false;
+function scheduleReauthentication(seconds){
+  clearTimeout(reauthTimer);
+  reauthDeadline=Date.now()+Math.max(0,Number(seconds)||0)*1000;
+  reauthTimer=setTimeout(lockSession,Math.max(0,reauthDeadline-Date.now()));
+}
+function lockSession(){
+  if(!state.authenticated||!state.user||sessionLocked)return;
+  sessionLocked=true;clearTimeout(reauthTimer);
+  clearDriveOrderPreview();clearDriveBatchPreview();clearPreview();clearFciPreview();
+  document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
+  $('reauth-username').value=state.user.username;$('reauth-password').value='';$('reauth-error').hidden=true;
+  $('reauth-dialog').showModal();$('reauth-password').focus();
+}
+function checkSessionDeadline(){if(state.authenticated&&reauthDeadline&&Date.now()>=reauthDeadline)lockSession();}
+window.addEventListener('focus',checkSessionDeadline);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkSessionDeadline();});
 async function api(path, options={}) {
-  if(!state.key)throw Error('Ingresá la clave API local y presioná Conectar.');
-  const headers = {'X-API-Key':state.key, ...options.headers};
-  if(options.body)headers['Content-Type']='application/json';
+  if(!state.authenticated)throw Error('Iniciá sesión para usar el sistema.');
+  checkSessionDeadline();
+  if(sessionLocked)throw Error('Ingresá tu contraseña para desbloquear la sesión.');
+  const headers = {...options.headers};
+  if(state.key)headers['X-API-Key']=state.key;
+  if(options.body&&!(options.body instanceof FormData))headers['Content-Type']='application/json';
   let response;
-  try {response=await fetch(path,{...options,headers});}catch{throw Error('No se obtuvo respuesta del servicio local. Si estabas enviando, consultá el registro antes de repetir.');}
+  try {response=await fetch(path,{...options,headers,credentials:'same-origin'});}catch{throw Error('No se obtuvo respuesta del servicio local. Si estabas enviando, consultá el registro antes de repetir.');}
   let data;
   try{data=await response.json();}catch{throw Error('El servicio devolvió una respuesta inesperada. Si era un envío, consultá el estado antes de repetir.');}
   if(!response.ok){
+    if(response.status===428||(response.status===401&&path!=='/auth/password'))lockSession();
     const detail=data.error||data.detail||'La solicitud no se pudo completar.';
     let text=Array.isArray(detail)?detail.map(x=>`${x.loc.join('.')}: ${x.msg}`).join(' · '):String(detail);
     if(data.detalle_banco)text+=' '+JSON.stringify(data.detalle_banco);
@@ -34,19 +64,26 @@ function showView(view){
   clearPreview();
   clearFciPreview();
   document.querySelectorAll('.view').forEach(x=>x.hidden=true);
-  document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===view));
-  const titles={cuentas:'Cuentas y saldos',movimientos:'Movimientos',transferencias:'Transferencias',echeqs:'eCheqs',ordenes:'Órdenes de pago PDF',proveedores:'Preparación de pagos',seguimiento:'Seguimiento',fci:'Fondos comunes de inversión'};
+  document.querySelectorAll('.nav').forEach(x=>{
+    const active=x.dataset.view===view;x.classList.toggle('active',active);
+    if(active)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current');
+  });
+  const titles={dashboard:'Inicio',cuentas:'Cuentas y saldos',movimientos:'Movimientos',transferencias:'Transferencias · TRB',echeqs:'eCheqs · CHE',fci:'Fondos comunes de inversión',usuarios:'Usuarios y auditoría'};
   $('page-title').textContent=titles[view];
   if(view==='transferencias'||view==='echeqs'){
     const oldKind=state.kind;
     state.kind=view==='transferencias'?'transferencia':'echeq';$('view-pago').hidden=false;
-    if(oldKind!==state.kind){$('beneficiary-name').value='';$('beneficiary-document').value='';$('beneficiary-cbu').value='';}
-    const cheque=state.kind==='echeq';$('payment-heading').textContent=cheque?'Preparar eCheq':'Preparar transferencia';
+    if(oldKind!==state.kind){$('beneficiary-name').value='';$('beneficiary-document').value='';$('beneficiary-cbu').value='';state.selectedDriveOrders=[];clearDriveOrderPreview();clearDriveBatchPreview();}
+    const cheque=state.kind==='echeq',method=cheque?'CHE':'TRB';$('payment-heading').textContent=cheque?'Preparar eCheq':'Preparar transferencia';
+    $('payment-form').hidden=true;
+    $('gecom-method-label').textContent=method;$('gecom-orders-title').textContent=`Órdenes ${method}`;
+    state.selectedDriveOrders=state.selectedDriveOrders.filter(id=>state.driveOrders.some(order=>order.source_id===id&&order.method===method));
+    renderDriveOrders();
     ['cheque-type-label','cheque-date-label','cheque-character-label'].forEach(id=>$(id).hidden=!cheque);
     $('cbu-label').hidden=cheque;$('beneficiary-cbu').required=!cheque;$('cheque-date').required=cheque;
     populateBeneficiaries();
-    $('test-order-note').hidden=!state.selectedOrder;
   }else{$(`view-${view}`).hidden=false;}
+  window.scrollTo(0,0);
 }
 function populateBeneficiaries(){
   const list=$('test-beneficiary');list.replaceChildren(el('option','Elegir beneficiario de prueba'));list.firstChild.value='';
@@ -79,6 +116,118 @@ async function loadAccounts(){
     const row=el('tr');[a.nroCuenta,a.denominacionCuenta,a.tipoCuenta,a.moneda,a.CBU||a.cbu||'—',money(a.saldo,a.moneda)].forEach((x,i)=>row.append(el('td',x,i===5?'numeric':undefined)));body.append(row);
   });
 }
+async function loadDashboard(){
+  const data=await api('/dashboard'),cards=$('dashboard-cards'),body=$('dashboard-operations');cards.replaceChildren();body.replaceChildren();
+  const fciTotal=(data.saldos_fci||[]).reduce((sum,item)=>sum+(Number(item.saldoDisponibleValorizado)||0),0);
+  const summary=[['Cuentas activas',data.cantidad_cuentas],['Saldo FCI',(data.saldos_fci||[]).length?money(fciTotal):'Sin consulta'],['Transferencias a firma',data.transferencias_pendientes_firma],['eCheqs a firma',data.echeqs_pendientes_firma],['Con error',data.operaciones_con_error]];
+  const captions=['Habilitadas para operar','Tenencia valorizada consultada','Para autorizar en BIE','Para autorizar en BIE','Revisar antes de reintentar'];
+  const icons=['M3 10h18M5 10v9m5-9v9m4-9v9m5-9v9M3 21h18M3 7l9-5 9 5H3', 'M4 18l5-5 4 3 7-10M15 6h5v5', 'M4 8h15m-4-4 4 4-4 4M20 16H5m4-4-4 4 4 4', 'M5 3h14v18l-3-2-4 2-4-2-3 2V3m4 5h6m-6 4h4', 'M12 8v5m0 3v1M12 3 2 21h20L12 3'];
+  summary.forEach(([title,value],index)=>{
+    const card=el('div',undefined,`account-card kpi-card kpi-${index+1}`),heading=el('div',undefined,'kpi-heading'),icon=el('span',undefined,'kpi-icon');
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');path.setAttribute('d',icons[index]);svg.append(path);icon.append(svg);
+    heading.append(el('div',title,'muted'),icon);card.append(heading,el('div',String(value),`balance${value==='Sin consulta'?' no-data':''}`),el('small',captions[index],'kpi-caption'));cards.append(card);
+  });
+  const pending=Number(data.transferencias_pendientes_firma||0)+Number(data.echeqs_pendientes_firma||0);
+  $('dashboard-pending-total').textContent=String(pending);
+  const today=state.config?.fecha_actual_argentina||localDate(new Date());
+  $('dashboard-date').textContent=new Intl.DateTimeFormat('es-AR',{dateStyle:'full'}).format(new Date(today+'T12:00:00'));
+  const accountCards=$('dashboard-account-cards');accountCards.replaceChildren();
+  (data.cuentas||[]).forEach(account=>{
+    const card=el('div',undefined,'account-card dashboard-balance'),info=el('div',undefined,'dashboard-account-info');
+    info.append(el('div',`${account.nroCuenta} · ${account.moneda||''}`,'account-title'),el('div',account.denominacionCuenta||'Cuenta','account-name'));
+    const amount=el('div',undefined,'dashboard-account-amount');amount.append(el('small','Saldo de la cuenta'),el('div',money(account.saldo,account.moneda||'ARS'),'balance'));
+    card.append(el('span','$','account-symbol'),info,amount);accountCards.append(card);
+  });
+  if(!accountCards.childElementCount)accountCards.append(el('div','No hay cuentas disponibles para mostrar.','empty-card'));
+  const operations=data.operaciones_hoy||[];$('dashboard-operation-count').textContent=`${operations.length} operación(es) hoy`;
+  $('dashboard-sync-status').textContent=`Última sincronización: ${data.ultima_sincronizacion_banco?dateTimeLabel(data.ultima_sincronizacion_banco):'sin datos'}`;
+  operations.forEach(item=>{const row=el('tr'),result=item.resultado||{},reference=operationBeneficiary(item);[dateTimeLabel(item.actualizado),item.actor,operationLabel(item.tipo),reference,operationAmount(item),result.consulta_estado?.data?.estadoOperacion?.descripcion||result.data?.estadoOperacion?.descripcion||item.estado,item.id_origen].forEach((value,index)=>row.append(el('td',value||'—',index===4?'numeric':undefined)));body.append(row);});
+  renderDashboardEmpty(body);
+}
+function renderDashboardEmpty(body){
+  if(body.childElementCount)return;
+  const row=el('tr'),cell=el('td',undefined,'dashboard-empty');cell.colSpan=7;
+  cell.append(el('strong','Tu actividad de hoy aparecerá acá'),el('span','Las operaciones que prepares se mostrarán con su importe, beneficiario y estado.'));
+  row.append(cell);body.append(row);
+}
+async function loadDayOperations(){
+  const date=state.config?.fecha_actual_argentina||new Date().toISOString().slice(0,10);
+  const result=await api(`/operaciones?fecha_desde=${date}&fecha_hasta=${date}`),rows=result.operaciones||[],body=$('dashboard-operations');body.replaceChildren();
+  $('dashboard-operation-count').textContent=`${rows.length} operación(es) hoy`;
+  rows.forEach(item=>{const bankData=item.resultado?.consulta_estado?.data||item.resultado?.data||{},status=bankData.estadoOperacion?.descripcion||item.estado,row=el('tr');
+    [dateTimeLabel(item.actualizado),item.actor,operationLabel(item.tipo),operationBeneficiary(item),operationAmount(item),status,item.id_origen].forEach((value,index)=>row.append(el('td',value||'—',index===4?'numeric':undefined)));body.append(row);
+  });
+  renderDashboardEmpty(body);
+}
+async function loadUsers(){
+  if(state.user?.role!=='admin'){$('user-admin-panel').hidden=true;return;}
+  $('user-admin-panel').hidden=false;const data=await api('/usuarios'),body=$('users-body');body.replaceChildren();
+  data.usuarios.forEach(user=>{const row=el('tr');[user.username,user.role,user.active?'Activo':'Inactivo',dateLabel(user.last_login_at)].forEach(value=>row.append(el('td',value||'—')));const cell=el('td');
+    const toggle=el('button',user.active?'Desactivar':'Reactivar','text-button');toggle.type='button';toggle.onclick=()=>action(toggle,async()=>{await api(`/usuarios/${encodeURIComponent(user.username)}`,{method:'PATCH',body:JSON.stringify({active:!user.active})});await loadUsers();});
+    const reset=el('button','Restablecer contraseña','text-button');reset.type='button';reset.onclick=()=>{ $('reset-user-name').value=user.username;$('reset-user-password').value='';$('admin-password-dialog').showModal();};cell.append(toggle,reset);row.append(cell);body.append(row);
+  });
+}
+async function loadAudit(){
+  const params=new URLSearchParams();if($('audit-from').value)params.set('fecha_desde',$('audit-from').value);if($('audit-to').value)params.set('fecha_hasta',$('audit-to').value);if($('audit-user').value.trim())params.set('usuario',$('audit-user').value.trim());
+  const data=await api('/operaciones?'+params),body=$('audit-body');body.replaceChildren();
+  data.operaciones.forEach(item=>{const row=el('tr'),bankData=item.resultado?.consulta_estado?.data||item.resultado?.data||{};[dateTimeLabel(item.actualizado),item.actor,operationLabel(item.tipo),operationBeneficiary(item),operationAmount(item),bankData.estadoOperacion?.descripcion||item.estado,item.id_origen].forEach((value,index)=>row.append(el('td',value??'—',index===4?'numeric':undefined)));body.append(row);});
+}
+let movementVersion=0,movementQuery=null;
+function movementEmpty(title,description){
+  const row=el('tr'),cell=el('td',undefined,'movement-empty');cell.colSpan=9;
+  cell.append(el('span','⇄','movement-empty-icon'),el('strong',title),el('span',description));row.append(cell);$('movements-body').replaceChildren(row);
+}
+function clearMovementQuery(){
+  movementVersion+=1;movementQuery=null;state.movements=null;state.movementPage=1;
+  $('movement-summary').hidden=true;$('movement-kpis').hidden=true;$('export-movements').disabled=true;
+  $('movement-page-prev').disabled=true;$('movement-page-next').disabled=true;$('movement-page-label').textContent='Sin consulta';
+  $('movement-result-context').textContent='Elegí una cuenta y un período para consultar.';
+  movementEmpty('Todo listo para tu consulta','Pulsá Consultar movimientos para ver la actividad de la cuenta y el período elegidos.');
+}
+function renderMovementRows(){
+  if(!state.movements)return;const currency=movementQuery?.currency||'ARS';
+  const search=$('movement-search').value.trim().toLocaleLowerCase('es-AR'),rawAmount=$('movement-amount-filter').value.trim(),type=$('movement-type').value;
+  const amountSearch=(rawAmount.includes(',')?rawAmount.replace(/\./g,'').replace(',','.'):rawAmount).replace(/[^0-9.]/g,'');
+  const rows=state.movements.movimientos.filter(item=>{
+    const amount=Number(item.monto)||0,description=String(item.descripcion||'').toLocaleLowerCase('es-AR');
+    return (!search||description.includes(search))&&(!amountSearch||Math.abs(amount).toFixed(2).includes(amountSearch))&&(!type||item.indDBCR===type);
+  });
+  const pageSize=50;state.movementPage=Math.max(1,Math.min(state.movementPage,Math.ceil(rows.length/pageSize)||1));
+  const start=(state.movementPage-1)*pageSize,body=$('movements-body');body.replaceChildren();
+  rows.slice(start,start+pageSize).forEach(item=>{
+    const amount=Math.abs(Number(item.monto)||0),account=movementQuery?.account||'—',row=el('tr'),debit=item.indDBCR==='DB',credit=item.indDBCR==='CR';
+    [dateLabel(item.fecha),item.descripcion,item.nroComprobante||item.idTransaccion||'—',debit?'Egreso':credit?'Ingreso':item.indDBCR||'—',
+     debit?money(amount,currency):'—',credit?money(amount,currency):'—',
+     money(debit?-amount:amount,currency),item.saldo===undefined?'—':money(item.saldo,currency),account].forEach((value,index)=>{
+      const cell=el('td',index===3?undefined:value,index>=4&&index<=7?'numeric':undefined);
+      if(index===3)cell.append(el('span',value,`movement-type ${debit?'debit':credit?'credit':'unknown'}`));
+      if(index===6&&(debit||credit))cell.classList.add(debit?'negative':'positive');
+      row.append(cell);
+    });body.append(row);
+  });
+  if(!rows.length)movementEmpty(state.movements.movimientos.length?'No hay coincidencias':'No hay movimientos en este período',state.movements.movimientos.length?'Probá otra descripción o importe, o limpiá los filtros.':'Probá ampliar el período o consultar otra cuenta.');
+  $('movement-page-label').textContent=`${rows.length?start+1:0}–${Math.min(start+pageSize,rows.length)} de ${rows.length}`;
+  $('movement-page-prev').disabled=state.movementPage<=1;$('movement-page-next').disabled=start+pageSize>=rows.length;
+}
+async function downloadFile(path,options={}){
+  checkSessionDeadline();if(sessionLocked)throw Error('Ingresá tu contraseña para desbloquear la sesión.');
+  const response=await fetch(path,{...options,credentials:'same-origin'});if(!response.ok){if(response.status===401||response.status===428)lockSession();let message='No se pudo generar el XLSX.';try{message=(await response.json()).detail||message;}catch{}throw Error(message);}
+  const blob=await response.blob(),url=URL.createObjectURL(blob),link=el('a');link.href=url;link.download=response.headers.get('content-disposition')?.match(/filename="?([^";]+)"?/)?.[1]||'reporte.xlsx';link.click();URL.revokeObjectURL(url);
+}
+async function loadTrackedTransfers(){
+  const params=new URLSearchParams({tipo:'transferencia',fecha_desde:$('status-transfer-from').value,fecha_hasta:$('status-transfer-to').value});
+  const result=await api('/operaciones?'+params),body=$('status-transfer-body'),rows=result.operaciones||[];body.replaceChildren();
+  $('status-transfer-count').textContent=`${rows.length} operación(es)`;
+  rows.forEach(item=>{
+    const row=el('tr'),resultData=item.resultado?.consulta_estado?.data||item.resultado?.data||{},status=resultData.estadoOperacion?.descripcion||item.estado;
+    const operationId=resultData.idOperacion||item.resultado?.data?.idOperacion||'—';
+    [dateTimeLabel(item.actualizado),item.actor,operationBeneficiary(item),operationAmount(item),status,operationId,item.id_origen].forEach((value,index)=>row.append(el('td',value||'—',index===3?'numeric':undefined)));
+    const cell=el('td'),button=el('button','Consultar banco','text-button');button.type='button';button.disabled=!item.id_origen;
+    button.onclick=()=>action(button,async()=>{await api('/transferencias/estado?'+new URLSearchParams({id_origen:item.id_origen}));await loadTrackedTransfers();message('Estado bancario actualizado.','success');});
+    cell.append(button);row.append(cell);body.append(row);
+  });
+}
 function selectedFciAccount(){
   return state.fciAccounts.find(x=>`${x.tipoCuenta}|${x.sucursalCuenta}|${x.numeroCuenta}`===$('fci-account').value);
 }
@@ -99,12 +248,17 @@ function populateFciInputs(){
   if([...fundSelect.options].some(x=>x.value===oldFund))fundSelect.value=oldFund;
 }
 async function loadFciData(){
+  clearFciPreview();$('fci-preview-button').disabled=true;
+  state.fciAccounts=[];state.fciFunds=[];populateFciInputs();$('fci-cbu').replaceChildren();
+  $('fci-accounts-body').replaceChildren();$('fci-funds-body').replaceChildren();
+  $('fci-profile').textContent='Sin datos validados';$('fci-linked-cbus').textContent='';
   const [accountsResponse,fundsResponse]=await Promise.all([
     api('/fci/cuentas-comitentes'),api('/fci/fondos')
   ]);
   const accountData=accountsResponse.data,fundData=fundsResponse.data;
-  if(!Array.isArray(accountData?.cuentasComitentes)||!Array.isArray(accountData?.cuentasVinculadas))
-    throw Error('La respuesta FCI no contiene cuentas comitentes y vinculadas válidas.');
+  const invalidFields=['cuentasComitentes'].filter(key=>!Array.isArray(accountData?.[key]));
+  if(invalidFields.length)
+    throw Error(`La respuesta FCI no contiene listas válidas en ${invalidFields.map(key=>`data.${key}`).join(' y ')}. Se registró la estructura recibida en el log del servidor: RESPONSE FCI cuentas-comitentes. No se habilitaron operaciones.`);
   if(!Array.isArray(fundData?.detalleFondo))throw Error('La respuesta FCI no contiene una lista de fondos válida.');
   state.fciAccounts=accountData.cuentasComitentes;state.fciFunds=fundData.detalleFondo;
   populateFciInputs();
@@ -113,7 +267,8 @@ async function loadFciData(){
   state.fciAccounts.forEach(a=>{
     const row=el('tr');[a.tipoCuenta,a.sucursalCuenta,a.numeroCuenta].forEach(v=>row.append(el('td',v)));accountsBody.append(row);
   });
-  const linked=accountData.cuentasVinculadas.map(x=>x.cbu).filter(Boolean);
+  const linkedFromResponse=Array.isArray(accountData?.cuentasVinculadas)?accountData.cuentasVinculadas.map(x=>x?.cbu).filter(Boolean):[];
+  const linked=linkedFromResponse;
   const cbuSelect=$('fci-cbu'),prior=cbuSelect.value;cbuSelect.replaceChildren();
   linked.forEach(cbu=>{const option=el('option',cbu);option.value=cbu;cbuSelect.append(option);});
   if([...cbuSelect.options].some(x=>x.value===prior))cbuSelect.value=prior;
@@ -132,6 +287,9 @@ async function loadFciData(){
   });
   $('fci-movement-start').value=state.config.fecha_operativa_banco.slice(0,8)+'01';
   $('fci-movement-end').value=state.config.fecha_operativa_banco;clearFciPreview();
+  $('fci-preview-button').disabled=!state.fciAccounts.length||!state.fciFunds.length||!linked.length;
+  if(!$('fci-preview-button').disabled)return;
+  message('El banco no informó cuentas comitentes, CBU vinculados o fondos suficientes para operar. No se completan datos automáticamente.','neutral');
 }
 function fciInstruction(){
   if(!$('fci-form').reportValidity())throw Error('Completá los campos requeridos para la operación FCI.');
@@ -177,17 +335,6 @@ async function submitFci(){
     message(`${e.message} Conservá el idOrigen ${pending.body.idOrigen} y consultá el estado antes de intentar otra operación.`,'error');
   }
 }
-async function loadOrders(){
-  if(!state.config?.homologacion)throw Error('Las órdenes y destinatarios de ejemplo sólo están disponibles en homologación.');
-  const data=await api('/homologacion/ordenes');state.orders=data.ordenes;
-  const body=$('orders-body');body.replaceChildren();
-  state.orders.forEach(o=>{
-    const row=el('tr');[o.orden,o.proveedorOriginal,o.medioOriginal,money(o.importeOriginal),money(o.retenciones)].forEach((x,i)=>row.append(el('td',x,i>=3?'numeric':undefined)));
-    const cell=el('td');const medium=el('select');medium.setAttribute('aria-label',`Medio de prueba ${o.orden}`);
-    for(const [v,t] of [['transferencia','Transferencia'],['echeq','eCheq']]){const opt=el('option',t);opt.value=v;medium.append(opt);}if(o.medioOriginal==='CHE')medium.value='echeq';
-    const btn=el('button','Preparar prueba','text-button');btn.type='button';btn.onclick=()=>prepareOrder(o,medium.value);cell.append(medium,btn);row.append(cell);body.append(row);
-  });
-}
 function populateDriveAccounts(){
   const select=$('drive-debit-account');if(!select)return;
   const previous=select.value;select.replaceChildren();
@@ -203,17 +350,37 @@ function populateDriveAccounts(){
 }
 function clearDriveOrderPreview(){
   state.driveOrderPreview=null;
-  $('drive-order-preview').hidden=true;
+  $('drive-order-preview').close();
   $('drive-order-confirm').checked=false;
   $('drive-order-send').disabled=true;
 }
+function clearDriveBatchPreview(){
+  state.batchOrderPreview=null;$('drive-batch-preview').close();$('drive-batch-confirm').checked=false;$('drive-batch-send').disabled=true;
+}
+function openOrderReview(id){
+  if(sessionLocked){clearDriveOrderPreview();clearDriveBatchPreview();return;}
+  const dialog=$(id);
+  dialog.querySelector('.review-notice').hidden=true;
+  dialog.querySelector('.technical-details').open=false;
+  dialog.querySelector('.review-environment').textContent=state.config?.simulacion?'Demo local · sin envío al banco':state.config?.homologacion?'Homologación · entorno de pruebas':'Producción · operación real';
+  dialog.showModal();
+  dialog.scrollTop=0;
+}
 function renderDriveOrders(){
-  const body=$('drive-orders-body');body.replaceChildren();
-  $('drive-order-count').textContent=`${state.driveOrders.length} orden(es)`;
+  const body=$('drive-orders-body'),method=state.kind==='echeq'?'CHE':'TRB';body.replaceChildren();
+  const orders=state.driveOrders.filter(order=>order.method===method);
+  state.selectedDriveOrders=state.selectedDriveOrders.filter(id=>orders.some(order=>order.source_id===id&&order.status==='READY'));
+  $('drive-order-count').textContent=`${orders.length} orden(es) ${method} · ${state.selectedDriveOrders.length} seleccionada(s)`;
   const statusLabels={READY:'Lista para revisar',NEEDS_REVIEW:'Requiere revisión',DUPLICATE:'Duplicada',ENVIADA_A_FIRMA:'Enviada a firma',RESPUESTA_RECIBIDA:'Respuesta recibida',RESULTADO_INCIERTO:'Resultado incierto',ERROR:'Error'};
-  state.driveOrders.forEach(order=>{
-    const row=el('tr');
-    [order.source_name,order.supplier?.name||'—',order.method||'—',order.amount?money(order.amount):'—',statusLabels[order.status]||order.status].forEach((value,index)=>row.append(el('td',value,index===3?'numeric':undefined)));
+  orders.forEach(order=>{
+    const row=el('tr'),selectCell=el('td'),select=el('input');select.type='checkbox';select.checked=state.selectedDriveOrders.includes(order.source_id);select.disabled=order.status!=='READY';select.setAttribute('aria-label',`Seleccionar orden ${order.order_number||order.source_name}`);
+    select.onchange=()=>{state.selectedDriveOrders=select.checked?[...state.selectedDriveOrders,order.source_id]:state.selectedDriveOrders.filter(id=>id!==order.source_id);clearDriveBatchPreview();renderDriveOrders();};
+    selectCell.append(select);row.append(selectCell);
+    [order.order_number||'—',dateLabel(order.issue_date),order.source_name,order.supplier?.name||'—',order.supplier?.document||'—',order.method||'—',order.amount?money(order.amount):'—',order.supplier?.cbu||'—',order.concept||order.references?.join(' · ')||'—',statusLabels[order.status]||order.status].forEach((value,index)=>{
+      const cell=el('td',index===9?undefined:value,index===6?'numeric':undefined);
+      if(index===9)cell.append(el('span',value,`order-status ${order.status==='READY'?'ready':order.status==='ENVIADA_A_FIRMA'?'sent':'attention'}`));
+      row.append(cell);
+    });
     const actionCell=el('td');
     if(order.status==='READY'){
       const button=el('button','Revisar','text-button');button.type='button';
@@ -223,6 +390,64 @@ function renderDriveOrders(){
     }else actionCell.append(el('span','—','muted'));
     row.append(actionCell);body.append(row);
   });
+  if(!orders.length){const row=el('tr'),cell=el('td',`No hay órdenes ${method} para mostrar. Buscá en Drive para actualizar la lista.`,'table-empty');cell.colSpan=12;row.append(cell);body.append(row);}
+  const ready=orders.filter(order=>order.status==='READY');
+  $('drive-select-all').checked=ready.length>0&&ready.every(order=>state.selectedDriveOrders.includes(order.source_id));
+  $('drive-select-all').indeterminate=ready.some(order=>state.selectedDriveOrders.includes(order.source_id))&&!$('drive-select-all').checked;
+  $('drive-select-all').disabled=!ready.length;
+  $('drive-batch-review-button').disabled=!state.selectedDriveOrders.length;
+}
+async function previewSelectedDriveOrders(){
+  const selected=state.driveOrders.filter(order=>state.selectedDriveOrders.includes(order.source_id)&&order.status==='READY');
+  if(!selected.length)throw Error('Seleccioná una o más órdenes listas para preparar.');
+  const account=state.accounts.find(item=>String(item.nroCuenta)===$('drive-debit-account').value),cbu=account?.CBU||account?.cbu;
+  if(!/^\d{22}$/.test(cbu||''))throw Error('Elegí una cuenta de débito ARS habilitada.');
+  const previews=[];
+  for(const order of selected){
+    const result=await api(`/ordenes-pago/${encodeURIComponent(order.source_id)}/previsualizar`,{method:'POST',body:JSON.stringify({cbuCuentaDebito:cbu})});
+    const item=result.payload_banco.beneficiarios?.[0]||result.payload_banco.echeqs?.[0];
+    previews.push({source_id:order.source_id,source_name:order.source_name,order_number:order.order_number,
+      method:order.method,beneficiary:item?.nombre||item?.beneficiarioNombre,amount:item?.monto,
+      document:item?.cui||item?.beneficiarioDocumento,destination:item?.cbuCvu,paymentDate:item?.fechaPago,
+      idOrigen:result.payload_banco.idOrigen,payload:result.payload_banco});
+  }
+  state.batchOrderPreview={accountNumber:String(account.nroCuenta),cbu,sourceIds:selected.map(order=>order.source_id),orders:previews};
+  const summary=$('drive-batch-summary');summary.replaceChildren();
+  summary.append(el('p',`${previews.length} orden(es) · Total ${money(previews.reduce((sum,item)=>sum+Number(item.amount),0))}`,'batch-total'),el('p',`Cuenta de débito ${account.nroCuenta} · CBU ${cbu}`,'batch-account'));
+  previews.forEach(item=>{
+    const card=el('article',undefined,'batch-order');
+    card.append(el('strong',item.beneficiary||'Beneficiario sin nombre'),el('strong',money(item.amount),'numeric'),el('span',`${item.method==='CHE'?'eCheq':'Transferencia'} · ${item.source_name}`,'muted'));
+    card.append(el('span',`CUIT / CUIL: ${item.document||'—'} · ${item.method==='CHE'?`Pago: ${dateLabel(item.paymentDate)}`:`CBU / CVU: ${item.destination||'—'}`}`,'muted'));
+    summary.append(card);
+  });
+  $('drive-batch-preview-json').textContent=JSON.stringify(previews.map(({payload,...item})=>item),null,2);
+  $('drive-batch-confirm').checked=false;$('drive-batch-send').disabled=true;
+  openOrderReview('drive-batch-preview');
+}
+async function sendSelectedDriveOrders(){
+  const pending=state.batchOrderPreview;if(!pending)throw Error('No hay una selección revisada.');
+  const account=state.accounts.find(item=>String(item.nroCuenta)===$('drive-debit-account').value);
+  if(String(account?.nroCuenta)!==pending.accountNumber||(account?.CBU||account?.cbu)!==pending.cbu
+      ||JSON.stringify(state.selectedDriveOrders.slice().sort())!==JSON.stringify(pending.sourceIds.slice().sort()))
+    throw Error('Cambió la selección o la cuenta. Volvé a revisar todas las órdenes.');
+  if(!$('drive-batch-confirm').checked)throw Error('Confirmá la revisión de todas las órdenes antes de enviar.');
+  state.busy=true;$('drive-batch-preview').setAttribute('aria-busy','true');
+  $('drive-batch-send').disabled=true;$('drive-batch-confirm').disabled=true;const results=[];
+  for(const order of pending.orders){
+    try{
+      const response=await api(`/ordenes-pago/${encodeURIComponent(order.source_id)}/enviar`,{method:'POST',body:JSON.stringify({cbuCuentaDebito:pending.cbu})});
+      results.push({source_name:order.source_name,idOrigen:order.idOrigen,estado:'ENVIADA_A_FIRMA',respuesta:response});
+    }catch(error){results.push({source_name:order.source_name,idOrigen:order.idOrigen,estado:'ERROR_O_INCIERTO',error:error.message});break;}
+  }
+  state.busy=false;$('drive-batch-preview').removeAttribute('aria-busy');$('drive-batch-confirm').disabled=false;
+  $('drive-batch-preview-json').textContent=JSON.stringify(results,null,2);$('drive-batch-confirm').checked=false;
+  const summary=$('drive-batch-summary');summary.replaceChildren();
+  results.forEach(item=>{const card=el('article',undefined,'batch-order');card.append(el('strong',item.source_name),el('span',item.estado==='ENVIADA_A_FIRMA'?'Enviada a firma':'Revisar estado antes de reintentar',`order-status ${item.estado==='ENVIADA_A_FIRMA'?'sent':'attention'}`));summary.append(card);});
+  if(results.length<pending.orders.length)summary.append(el('p',`${pending.orders.length-results.length} orden(es) sin enviar. El lote se detuvo para evitar nuevos envíos tras un error.`));
+  state.batchOrderPreview=null;state.selectedDriveOrders=[];
+  try{await loadDriveOrders();}catch(error){message(`No se pudo actualizar la lista (${error.message}); revisá los registros por idOrigen.`, 'error');return;}
+  const failed=results.some(item=>item.estado!=='ENVIADA_A_FIRMA');
+  message(failed?'El lote se detuvo en el primer error. Revisá cada idOrigen; no se reintentó automáticamente.':`${results.length} operación(es) enviadas a firma. Completá la autorización en BIE.`,failed?'error':'success');
 }
 async function loadDriveOrders(sync=false){
   const result=await api(sync?'/ordenes-pago/sincronizar':'/ordenes-pago',{method:sync?'POST':'GET'});
@@ -239,16 +464,19 @@ async function previewDriveOrder(order){
     method:'POST',body:JSON.stringify({cbuCuentaDebito:cbu})
   });
   state.driveOrderPreview={sourceId:order.source_id,accountNumber:String(account.nroCuenta),cbu,payload:result.payload_banco,summary:result.orden};
+  const payload=result.payload_banco,item=payload.beneficiarios?.[0]||payload.echeqs?.[0];
+  $('drive-preview-amount').textContent=money(result.orden.importe);
+  $('drive-preview-method').textContent=payload.beneficiarios?'Transferencia · TRB':'eCheq · CHE';
   $('drive-preview-summary').replaceChildren();
-  addDriveReview('Archivo',result.orden.archivo);
-  addDriveReview('Proveedor',result.orden.proveedor);
-  addDriveReview('Medio',result.orden.medio);
-  addDriveReview('Importe',money(result.orden.importe));
-  addDriveReview('Cuenta de débito',cbu);
-  addDriveReview('idOrigen',result.payload_banco.idOrigen);
-  $('drive-preview-json').textContent=JSON.stringify(result.payload_banco,null,2);
-  $('drive-order-preview').hidden=false;
-  message('Vista previa lista. No se envió ninguna operación al banco.','success');
+  addDriveReview('Proveedor / destinatario',result.orden.proveedor);
+  addDriveReview('CUIT / CUIL',item?.cui||item?.beneficiarioDocumento||order.supplier?.document||'—');
+  if(payload.beneficiarios)addDriveReview('CBU / CVU de destino',item?.cbuCvu||'—');
+  else addDriveReview('Fecha de pago',dateLabel(item?.fechaPago||order.cheque_date));
+  addDriveReview('Cuenta de débito',`${account.nroCuenta} · ARS`);
+  addDriveReview('CBU de débito',cbu);
+  addDriveReview('Archivo en Drive',result.orden.archivo);
+  $('drive-preview-json').textContent=JSON.stringify(payload,null,2);
+  openOrderReview('drive-order-preview');
 }
 function addDriveReview(label,value){
   const item=el('div',undefined,'review-item');item.append(el('small',label),el('strong',value));$('drive-preview-summary').append(item);
@@ -259,7 +487,7 @@ async function transmitDriveOrder(){
   if(String(account?.nroCuenta)!==pending.accountNumber||(account?.CBU||account?.cbu)!==pending.cbu)
     throw Error('La cuenta de débito cambió. Volvé a revisar la vista previa.');
   if(!$('drive-order-confirm').checked)throw Error('Confirmá la revisión de la orden antes de enviarla.');
-  $('send-dialog').close();state.busy=true;$('confirm-send').disabled=true;$('drive-order-send').disabled=true;
+  $('drive-order-preview').close();state.busy=true;$('confirm-send').disabled=true;$('drive-order-send').disabled=true;
   const payload=pending.payload,item=payload.beneficiarios?.[0]||payload.echeqs[0];
   const kind=payload.beneficiarios?'transferencia':'echeq';
   sessionStorage.setItem('credicoopPendingOrigin',payload.idOrigen);
@@ -277,14 +505,6 @@ async function transmitDriveOrder(){
     throw Error(`${error.message} Consultá el registro de la orden y el banco antes de repetir.`);
   }finally{state.busy=false;$('confirm-send').disabled=false;}
 }
-function prepareOrder(order,kind){
-  if(!state.config?.homologacion){message('Las órdenes de ejemplo sólo se usan en homologación.','error');return;}
-  state.selectedOrder=order;newInstruction(true);showView(kind==='echeq'?'echeqs':'transferencias');
-  $('test-order-note').textContent=`Prueba de la orden ${order.orden}. Proveedor original: ${order.proveedorOriginal}. Importe original: ${money(order.importeOriginal)}. Elegí un beneficiario de homologación; esta instrucción no modifica la orden ni la planilla original.`;
-  $('test-order-note').hidden=false;$('payment-amount').value='15.79';
-  // Usar exclusivamente el calendario operativo del banco para este ejemplo.
-  resetChequeDate();message('Orden cargada para prueba. Elegí un beneficiario y revisá cuenta, importe y fecha.','neutral');
-}
 function resetChequeDate(){
   if(!state.config)return;
   const d=state.config.fecha_operativa_banco;
@@ -295,7 +515,7 @@ function newInstruction(fromOrder=false){
   clearPreview();$('payment-origin').value=newId();sessionStorage.removeItem('credicoopPendingOrigin');
   $('beneficiary-name').value='';$('beneficiary-document').value='';$('beneficiary-cbu').value='';
   $('test-beneficiary').value='';$('payment-amount').value='15.79';
-  if(!fromOrder){state.selectedOrder=null;$('test-order-note').hidden=true;}
+  if(!fromOrder)clearPreview();
 }
 function buildPayment(){
   if(!state.config)throw Error('Conectá el servicio antes de preparar una instrucción.');
@@ -337,11 +557,11 @@ async function transmit(){
   try{
     const response=await api(p.path,{method:'POST',body:JSON.stringify(p.body)});
     $('status-operation').value=String(response.respuesta_banco?.data?.idOperacion||'');
-    showOperation(response);showView('seguimiento');
+    showOperation(response);showView('dashboard');loadDayOperations().catch(error=>message(`El envío fue respondido, pero no se pudo actualizar el seguimiento (${error.message}).`,'error'));
     const status=response.respuesta_banco?.data?.estadoOperacion?.descripcion||'Respuesta recibida';
     message(`${state.config.simulacion?'Respuesta simulada':'Respuesta del banco'}: ${status}. ${state.config.simulacion?'Esta demostración no envía instrucciones al banco.':'Consultá el estado y completá firma y activación en BIE.'}`,status.toLowerCase().includes('rechaz')?'error':'success');
   }catch(e){
-    clearPreview();showView('seguimiento');message(`${e.message} Conservá el idOrigen ${p.body.idOrigen} y revisá el registro local antes de repetir.`,'error');
+    clearPreview();showView('dashboard');message(`${e.message} Conservá el idOrigen ${p.body.idOrigen} y revisá el registro local antes de repetir.`,'error');
   }finally{state.busy=false;$('confirm-send').disabled=false;}
 }
 function showOperation(data){
@@ -349,33 +569,118 @@ function showOperation(data){
   const d=data.respuesta_banco?.data||data.data||data.resultado?.data||data;
   $('operation-state').textContent=d.estadoOperacion?.descripcion||data.estado||'Respuesta recibida';
 }
-document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{
-  if(!state.busy){
-    if(b.dataset.view==='transferencias'||b.dataset.view==='echeqs')state.selectedOrder=null;
-    showView(b.dataset.view);
-    if(b.dataset.view==='fci'&&state.key&&!state.fciAccounts.length)action($('refresh-fci'),loadFciData);
-    if(b.dataset.view==='ordenes'&&state.key&&!state.config?.simulacion)action($('sync-drive-orders'),()=>loadDriveOrders());
+function renderSessionIdentity(){
+  const user=state.user,role=user.role==='admin'?'Administrador':'Usuario';
+  $('connected-user').textContent=user.username;$('connected-user').title=`${user.username} · ${role}`;
+  $('session-profile').setAttribute('aria-label',`Mi usuario y seguridad: ${user.username}, ${role}`);
+  $('session-avatar').textContent=user.username.slice(0,1).toUpperCase();
+  $('profile-name').textContent=user.username;$('profile-role').textContent=role;
+}
+async function initializeApp(user,reauthenticateIn=1800){
+  sessionLocked=false;scheduleReauthentication(reauthenticateIn);
+  state.authenticated=true;state.user=user;document.body.classList.remove('logged-out');document.body.classList.add('logged-in');$('login-panel').hidden=true;$('bank-app').hidden=false;
+  renderSessionIdentity();
+  $('connection-status').textContent='Sesión protegida';$('user-admin-panel').hidden=user.role!=='admin';
+  state.config=await api('/configuracion');
+  $('environment').textContent=state.config.simulacion?'Demo local · Sin banco':state.config.homologacion?'Homologación · Pruebas':'Producción · Operaciones reales';
+  $('environment').dataset.mode=state.config.simulacion?'demo':state.config.homologacion?'test':'production';
+  const today=state.config.fecha_actual_argentina,monthStart=today.slice(0,8)+'01';
+  $('movement-start').value=state.config.fecha_operativa_banco.slice(0,8)+'01';clearMovementQuery();resetChequeDate();
+  $('status-transfer-from').value=monthStart;$('status-transfer-to').value=today;
+  $('homo-dates').hidden=!state.config.homologacion;
+  $('payment-origin').value=sessionStorage.getItem('credicoopPendingOrigin')||newId();
+  $('audit-from').value=today;$('audit-to').value=today;
+  state.beneficiaries=[];
+  if(state.config.homologacion)state.beneficiaries=(await api('/homologacion/beneficiarios')).beneficiarios;
+  populateBeneficiaries();await loadAccounts();if(!state.config.simulacion)await loadDriveOrders();await loadDashboard();showView('dashboard');
+  message(`Sesión iniciada. Fecha operativa: ${dateLabel(state.config.fecha_operativa_banco)}.`, 'success');
+}
+function showLogin(){
+  clearTimeout(reauthTimer);reauthDeadline=0;sessionLocked=false;
+  document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());$('reauth-password').value='';
+  clearDriveOrderPreview();clearDriveBatchPreview();
+  state.authenticated=false;state.user=null;state.key='';document.body.classList.remove('logged-in');document.body.classList.add('logged-out');$('bank-app').hidden=true;$('login-panel').hidden=false;$('environment').textContent='Iniciar sesión';$('environment').removeAttribute('data-mode');
+}
+$('sidebar-toggle').onclick=()=>{
+  const collapsed=document.body.classList.toggle('sidebar-collapsed');
+  $('sidebar-toggle').setAttribute('aria-expanded',String(!collapsed));
+  $('sidebar-toggle').setAttribute('aria-label',collapsed?'Expandir menú':'Colapsar menú');
+};
+document.querySelectorAll('.nav').forEach(button=>button.onclick=()=>{
+  if(!state.busy&&state.authenticated){
+    showView(button.dataset.view);
+    if(button.dataset.view==='dashboard')action($('refresh-dashboard'),loadDashboard);
+    if(button.dataset.view==='usuarios')action($('refresh-audit'),async()=>{await loadUsers();await loadAudit();});
+    if(button.dataset.view==='fci'&&!state.fciAccounts.length)action($('refresh-fci'),loadFciData);
+    if((button.dataset.view==='transferencias'||button.dataset.view==='echeqs')&&!state.config?.simulacion)action($('sync-drive-orders'),()=>loadDriveOrders());
   }
 });
-$('connect').onclick=()=>action($('connect'),async()=>{
-  state.key=$('api-key').value.trim();clearPreview();state.config=await api('/configuracion');
-  $('environment').textContent=state.config.simulacion?'Demo local · Sin banco':state.config.homologacion?'Homologación':'Producción';
-  $('connection-status').textContent=`Adherente ${state.config.adherente}`;
-  $('movement-start').value=state.config.fecha_operativa_banco.slice(0,8)+'01';resetChequeDate();
-  state.beneficiaries=[];state.orders=[];
-  if(state.config.homologacion){state.beneficiaries=(await api('/homologacion/beneficiarios')).beneficiarios;await loadOrders();}
-  populateBeneficiaries();
-  await loadAccounts();message(`${state.config.simulacion?'Demostración con respuestas simuladas. No se contacta al banco.':'Conectado.'} Fecha operativa: ${dateLabel(state.config.fecha_operativa_banco)}.`, 'success');
+document.querySelectorAll('[data-dashboard-view]').forEach(button=>button.onclick=()=>{
+  document.querySelector(`.nav[data-view="${button.dataset.dashboardView}"]`).click();
 });
-$('sync-drive-orders').onclick=()=>action($('sync-drive-orders'),()=>loadDriveOrders(true));
-$('drive-debit-account').onchange=clearDriveOrderPreview;
-$('drive-order-confirm').onchange=()=>$('drive-order-send').disabled=!state.driveOrderPreview||!$('drive-order-confirm').checked||state.busy;
-$('drive-order-send').onclick=()=>{
-  const pending=state.driveOrderPreview;if(!pending)return;
-  const item=pending.payload.beneficiarios?.[0]||pending.payload.echeqs[0];
-  $('dialog-summary').textContent=`${state.config.homologacion?'HOMOLOGACIÓN':'PRODUCCIÓN'} · Orden ${pending.summary.archivo}, ${money(item.monto)} para ${item.nombre||item.beneficiarioNombre}. Cuenta de débito ${pending.cbu}. idOrigen ${pending.payload.idOrigen}. La operación se enviará a firma; no se ejecutará sin la firma en BIE.`;
-  $('send-dialog').showModal();
+$('login-form').onsubmit=async event=>{
+  event.preventDefault();const button=$('login-submit');button.disabled=true;$('login-error').hidden=true;
+  try{
+    const response=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({username:$('login-username').value.trim(),password:$('login-password').value})});
+    let data={};try{data=await response.json();}catch{}
+    if(!response.ok)throw Error(data.detail||'No se pudo iniciar sesión.');
+    $('login-password').value='';await initializeApp(data.usuario);
+  }catch(error){$('login-error').textContent=error.message||'No se pudo iniciar sesión.';$('login-error').hidden=false;}
+  finally{button.disabled=false;}
 };
+async function endSession(button){
+  button.disabled=true;
+  try{
+    const response=await fetch('/logout',{method:'POST',credentials:'same-origin'});
+    if(!response.ok)throw Error('No se pudo cerrar la sesión. Intentá nuevamente.');
+    showLogin();
+  }catch(error){
+    if(sessionLocked){$('reauth-error').textContent=error.message;$('reauth-error').hidden=false;}else message(error.message,'error');
+  }finally{button.disabled=false;}
+}
+$('logout').onclick=()=>endSession($('logout'));
+$('reauth-logout').onclick=()=>endSession($('reauth-logout'));
+$('reauth-dialog').addEventListener('cancel',event=>event.preventDefault());
+$('reauth-form').onsubmit=async event=>{
+  event.preventDefault();const button=$('reauth-submit');button.disabled=true;$('reauth-error').hidden=true;
+  try{
+    const response=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({username:state.user.username,password:$('reauth-password').value})});
+    const data=await response.json();$('reauth-password').value='';
+    if(!response.ok)throw Error(data.detail||'No se pudo validar la contraseña.');
+    state.user=data.usuario;sessionLocked=false;$('reauth-dialog').close();scheduleReauthentication(data.revalidar_en_segundos);
+    if(!state.config)await initializeApp(data.usuario,data.revalidar_en_segundos);
+    renderSessionIdentity();
+    $('user-admin-panel').hidden=state.user.role!=='admin';
+    message('Sesión desbloqueada. Volvé a revisar los pagos pendientes antes de enviarlos.','success');
+  }catch(error){$('reauth-error').textContent=error.message;$('reauth-error').hidden=false;$('reauth-password').focus();}
+  finally{button.disabled=false;}
+};
+$('session-profile').onclick=()=>document.querySelector('.nav[data-view="usuarios"]').click();
+$('change-password').onclick=()=>$('password-dialog').showModal();
+$('password-cancel').onclick=()=>$('password-dialog').close();
+$('password-form').onsubmit=event=>{event.preventDefault();action(event.submitter,async()=>{
+  await api('/auth/password',{method:'POST',body:JSON.stringify({current_password:$('password-current').value,new_password:$('password-new').value})});
+  $('password-dialog').close();$('password-current').value='';$('password-new').value='';showLogin();message('Contraseña actualizada; iniciá sesión nuevamente.','success');
+});};
+fetch('/auth/me',{credentials:'same-origin'}).then(async response=>{
+  if(!response.ok)return;const data=await response.json(),user={username:data.usuario,role:data.rol};
+  if(data.revalidacion_requerida){state.authenticated=true;state.user=user;lockSession();return;}
+  await initializeApp(user,data.revalidar_en_segundos);
+}).catch(()=>{});
+$('sync-drive-orders').onclick=()=>action($('sync-drive-orders'),()=>loadDriveOrders(true));
+$('drive-select-all').onchange=()=>{clearDriveBatchPreview();const method=state.kind==='echeq'?'CHE':'TRB';state.selectedDriveOrders=$('drive-select-all').checked?state.driveOrders.filter(order=>order.status==='READY'&&order.method===method).map(order=>order.source_id):[];renderDriveOrders();};
+$('drive-batch-review-button').onclick=()=>action($('drive-batch-review-button'),previewSelectedDriveOrders);
+$('drive-batch-confirm').onchange=()=>$('drive-batch-send').disabled=!state.batchOrderPreview||!$('drive-batch-confirm').checked;
+$('drive-batch-send').onclick=async()=>{await action($('drive-batch-send'),sendSelectedDriveOrders);$('drive-batch-send').disabled=!state.batchOrderPreview||!$('drive-batch-confirm').checked||state.busy;};
+$('drive-debit-account').onchange=()=>{clearDriveOrderPreview();clearDriveBatchPreview();};
+$('drive-order-confirm').onchange=()=>$('drive-order-send').disabled=!state.driveOrderPreview||!$('drive-order-confirm').checked||state.busy;
+$('drive-order-send').onclick=async()=>{await action($('drive-order-send'),transmitDriveOrder);$('drive-order-send').disabled=!state.driveOrderPreview||!$('drive-order-confirm').checked||state.busy;};
+['order','batch'].forEach(kind=>{
+  const dialog=$(`drive-${kind}-preview`),clear=kind==='order'?clearDriveOrderPreview:clearDriveBatchPreview;
+  const dismiss=()=>{if(!state.busy)clear();};
+  $(`drive-${kind}-close`).onclick=dismiss;$(`drive-${kind}-back`).onclick=dismiss;
+  dialog.addEventListener('cancel',event=>{event.preventDefault();dismiss();});
+});
 $('refresh-fci').onclick=()=>action($('refresh-fci'),loadFciData);
 $('fci-kind').onchange=()=>{
   const subscription=$('fci-kind').value==='suscripcion',byAmount=subscription||$('fci-redemption-mode').value==='monto';
@@ -440,21 +745,64 @@ $('fci-local-status').onclick=()=>action($('fci-local-status'),async()=>{
   $('fci-operation-state').textContent=result.estado||'Registro local';$('fci-result').hidden=false;
 });
 $('refresh-accounts').onclick=()=>action($('refresh-accounts'),loadAccounts);
-$('refresh-orders').onclick=()=>action($('refresh-orders'),loadOrders);
-$('homo-dates').onclick=()=>{if(!state.config){message('Conectá el servicio para conocer la fecha operativa.','error');return;}$('movement-start').value=state.config.fecha_operativa_banco.slice(0,8)+'01';$('movement-end').value=state.config.fecha_operativa_banco;};
-$('movement-form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
-  const params=new URLSearchParams({fecha_desde:$('movement-start').value});if($('movement-end').value)params.set('fecha_hasta',$('movement-end').value);
-  const data=await api(`/cuentas/${encodeURIComponent($('movement-account').value)}/movimientos?${params}`);state.movements=data;
-  const currency=state.accounts.find(a=>String(a.nroCuenta)===$('movement-account').value)?.moneda||'ARS';
-  $('download-movements').disabled=false;const body=$('movements-body');body.replaceChildren();
-  data.movimientos.forEach(m=>{const row=el('tr'),amount=(m.indDBCR==='DB'?-1:1)*Number(m.monto);[dateLabel(m.fecha),m.descripcion,m.indDBCR,m.nroComprobante||'—',money(amount,currency),money(m.saldo,currency)].forEach((x,i)=>row.append(el('td',x,i>=4?`numeric ${i===4?(amount<0?'negative':'positive'):''}`:undefined)));body.append(row);});
-  const summary=$('movement-summary');summary.hidden=false;summary.className='notice '+(data.completa?'neutral':'error');
-  let text=`${data.movimientos.length} movimientos · ${dateLabel(data.fecha_desde)} al ${dateLabel(data.fecha_hasta)}.`;
-  const last=data.encabezados?.[0]?.datos;if(last)text+=` Saldo actual: ${money(last.monto,currency)}. Saldo al cierre consultado: ${money(last.saldo,currency)}.`;
-  if(!data.completa)text+=' La consulta está incompleta: '+JSON.stringify(data.rangos_incompletos);
-  if(data.aviso_homologacion)text+=' '+data.aviso_homologacion;summary.textContent=text;
+$('export-accounts').onclick=()=>action($('export-accounts'),()=>downloadFile('/export/cuentas.xlsx'));
+$('refresh-dashboard').onclick=()=>action($('refresh-dashboard'),loadDashboard);
+$('refresh-day-operations').onclick=()=>action($('refresh-day-operations'),async()=>{await loadDayOperations();if(!$('status-transfer-panel').hidden&&$('status-transfer-from').value)await loadTrackedTransfers();});
+$('fci-export-balances').onclick=()=>action($('fci-export-balances'),async()=>{
+  const account=selectedFciAccount();if(!account)throw Error('Actualizá las cuentas comitentes y seleccioná una.');
+  await downloadFile('/fci/saldos/export.xlsx',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cuentaComitente:account})});
+});
+$('user-create-form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
+  await api('/usuarios',{method:'POST',body:JSON.stringify({username:$('user-new-name').value.trim(),password:$('user-new-password').value,role:$('user-new-role').value})});
+  $('user-new-name').value='';$('user-new-password').value='';await loadUsers();message('Usuario creado.','success');
 });};
-$('download-movements').onclick=()=>{if(!state.movements)return;const blob=new Blob([JSON.stringify(state.movements,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=el('a');a.href=url;a.download='movimientos.json';a.click();URL.revokeObjectURL(url);};
+$('refresh-audit').onclick=()=>action($('refresh-audit'),async()=>{await loadUsers();await loadAudit();});
+$('audit-user').onchange=()=>action($('refresh-audit'),loadAudit);
+$('export-audit').onclick=()=>action($('export-audit'),()=>{const params=new URLSearchParams();if($('audit-from').value)params.set('fecha_desde',$('audit-from').value);if($('audit-to').value)params.set('fecha_hasta',$('audit-to').value);if($('audit-user').value.trim())params.set('usuario',$('audit-user').value.trim());return downloadFile('/operaciones/export.xlsx?'+params);});
+$('admin-password-dialog').querySelector('form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
+  await api(`/usuarios/${encodeURIComponent($('reset-user-name').value)}`,{method:'PATCH',body:JSON.stringify({password:$('reset-user-password').value})});
+  $('admin-password-dialog').close();$('reset-user-password').value='';await loadUsers();message('Contraseña restablecida por un administrador.','success');
+});};
+$('admin-password-cancel').onclick=()=>$('admin-password-dialog').close();
+$('audit-from').onchange=()=>action($('refresh-audit'),loadAudit);$('audit-to').onchange=()=>action($('refresh-audit'),loadAudit);
+$('homo-dates').onclick=()=>{if(!state.config)return;$('movement-start').value=state.config.fecha_operativa_banco.slice(0,8)+'01';$('movement-end').value=state.config.fecha_operativa_banco;clearMovementQuery();document.querySelectorAll('.movement-range').forEach(button=>button.setAttribute('aria-pressed','false'));};
+$('movement-form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
+  clearMovementQuery();const version=movementVersion,query={account:$('movement-account').value,from:$('movement-start').value,to:$('movement-end').value};
+  query.currency=state.accounts.find(a=>String(a.nroCuenta)===query.account)?.moneda||'ARS';
+  const params=new URLSearchParams({fecha_desde:query.from});if(query.to)params.set('fecha_hasta',query.to);
+  $('movement-form').setAttribute('aria-busy','true');$('movement-result-context').textContent='Consultando los movimientos…';
+  movementEmpty('Consultando al banco','La consulta puede tardar según el período elegido.');
+  try{
+    const data=await api(`/cuentas/${encodeURIComponent(query.account)}/movimientos?${params}`);
+    if(version!==movementVersion)return;
+    if(!Array.isArray(data.movimientos))throw Error('El banco no devolvió una lista de movimientos válida.');
+    state.movements=data;movementQuery={...query,from:data.fecha_desde||query.from,to:data.fecha_hasta||query.to};state.movementPage=1;
+    $('export-movements').disabled=false;renderMovementRows();
+    const currency=query.currency,last=data.encabezados?.[0]?.datos;
+    $('movement-result-context').textContent=`Cuenta ${query.account} · ${currency} · ${dateLabel(movementQuery.from)} al ${dateLabel(movementQuery.to)}${data.completa?'':' · Consulta parcial'}`;
+    const credits=data.movimientos.filter(item=>item.indDBCR==='CR').reduce((sum,item)=>sum+Math.abs(Number(item.monto)||0),0),debits=data.movimientos.filter(item=>item.indDBCR==='DB').reduce((sum,item)=>sum+Math.abs(Number(item.monto)||0),0);
+    const kpis=$('movement-kpis');kpis.replaceChildren();
+    const caption=data.completa?'En el período consultado':'Solo movimientos recuperados · parcial';
+    [['Movimientos',String(data.movimientos.length),'Operaciones recuperadas','blue'],['Ingresos',money(credits,currency),caption,'green'],['Egresos',money(debits,currency),caption,'amber'],['Saldo actual',last?.monto===undefined?'Sin dato':money(last.monto,currency),'Informado por el banco','slate']].forEach(([title,value,note,tone])=>{const card=el('div',undefined,`movement-kpi ${tone}`);card.append(el('small',title),el('strong',value),el('span',note));kpis.append(card);});kpis.hidden=false;
+    const summary=$('movement-summary');summary.hidden=false;summary.className='notice '+(data.completa?'neutral':'error');
+    let text=data.completa?'Consulta completa. Los filtros se aplican a los resultados mostrados; el XLSX incluye todo el período.':'Consulta incompleta: los importes reflejan únicamente los movimientos recuperados. Rangos pendientes: '+JSON.stringify(data.rangos_incompletos||[])+'.';
+    if(last?.saldo!==undefined)text+=` Saldo al cierre consultado: ${money(last.saldo,currency)}.`;
+    if(data.aviso_homologacion)text+=' '+data.aviso_homologacion;summary.textContent=text;
+  }catch(error){if(version===movementVersion){$('movement-result-context').textContent='No se pudo completar la consulta.';movementEmpty('No pudimos cargar los movimientos','Revisá la cuenta y el período e intentá nuevamente.');}throw error;}
+  finally{$('movement-form').removeAttribute('aria-busy');}
+});};
+$('export-movements').onclick=()=>action($('export-movements'),()=>{if(!movementQuery)throw Error('Consultá los movimientos antes de descargar.');const params=new URLSearchParams({nro_cuenta:movementQuery.account,fecha_desde:movementQuery.from,fecha_hasta:movementQuery.to});return downloadFile('/export/movimientos.xlsx?'+params);});
+$('movement-clear-filters').onclick=()=>{['movement-search','movement-amount-filter','movement-type'].forEach(id=>$(id).value='');state.movementPage=1;renderMovementRows();};
+['movement-account','movement-start','movement-end'].forEach(id=>$(id).addEventListener('change',clearMovementQuery));
+['movement-search','movement-amount-filter','movement-type'].forEach(id=>$(id).addEventListener('input',()=>{state.movementPage=1;renderMovementRows();}));
+$('movement-page-prev').onclick=()=>{state.movementPage=Math.max(1,state.movementPage-1);renderMovementRows();};
+$('movement-page-next').onclick=()=>{state.movementPage+=1;renderMovementRows();};
+document.querySelectorAll('.movement-range').forEach(button=>button.onclick=()=>{
+  const days=Number(button.dataset.days),end=new Date(),start=new Date(end);start.setDate(start.getDate()-(days-1));
+  $('movement-start').value=localDate(start);$('movement-end').value=localDate(end);clearMovementQuery();
+  document.querySelectorAll('.movement-range').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+});
+['movement-start','movement-end'].forEach(id=>$(id).addEventListener('input',()=>document.querySelectorAll('.movement-range').forEach(button=>button.setAttribute('aria-pressed','false'))));
 $('test-beneficiary').onchange=()=>{
   const b=state.beneficiaries.find(x=>x.tipo===state.kind&&x.documento+'|'+x.cbuCvu===$('test-beneficiary').value);
   if(!b)return;$('beneficiary-name').value=normalName(b.nombre);$('beneficiary-document').value=b.documento;$('beneficiary-cbu').value=b.cbuCvu||'';clearPreview();
@@ -475,13 +823,7 @@ $('send-payment').onclick=()=>{
   $('send-dialog').showModal();
 };
 $('cancel-send').onclick=()=>$('send-dialog').close();$('confirm-send').onclick=()=>action($('confirm-send'),()=>state.driveOrderPreview?transmitDriveOrder():state.fciPreview?submitFci():transmit());
-$('status-form').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{
-  const kind=$('status-kind').value,params=new URLSearchParams(),op=$('status-operation').value.trim(),origin=$('status-origin').value.trim();
-  if(op)params.set('id_operacion',op);if(kind==='transferencia'&&origin)params.set('id_origen',origin);
-  if(!op&&(!origin||kind==='echeq'))throw Error(kind==='echeq'?'Para consultar eCheq al banco necesitás idOperacion. Si se perdió la respuesta, revisá el registro local y BIE.':'Ingresá idOperacion o idOrigen.');
-  showOperation(await api((kind==='transferencia'?'/transferencias/estado':'/echeqs/estado')+'?'+params));
-});};
-$('local-status').onclick=()=>action($('local-status'),async()=>{const origin=$('status-origin').value.trim();if(!origin)throw Error('Ingresá idOrigen.');showOperation(await api(`/operaciones/${$('status-kind').value}/${encodeURIComponent(origin)}`));});
+$('status-transfer-form').onsubmit=e=>{e.preventDefault();action(e.submitter,loadTrackedTransfers);};
 $('payment-origin').value=sessionStorage.getItem('credicoopPendingOrigin')||newId();
  $('fci-origin').value=newId();$('fci-kind').dispatchEvent(new Event('change'));
 if(sessionStorage.getItem('credicoopPendingOrigin')){$('status-origin').value=$('payment-origin').value;message('Hay un envío anterior en esta sesión. Consultá su registro local y el banco antes de repetir.','neutral');}

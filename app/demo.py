@@ -3,6 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 import httpx
+from argon2 import PasswordHasher
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from .client import CredicoopClient
@@ -25,7 +26,8 @@ def create_demo_app():
                    client_id='30662210877', adherente=661395, api_key=DEMO_KEY,
                    fecha_operativa='2026-08-28', private_key_path=path, journal_path=root / 'demo.sqlite3',
                    private_key_password=None, ca_bundle=None,
-                   scopes='cuentas transferenciasConFirma echeqConFirma fciConFirma beneficiarioTransferencia beneficiarioEcheq consultaCbuCvuAlias')
+                   scopes='cuentas transferenciasConFirma echeqConFirma fciConFirma beneficiarioTransferencia beneficiarioEcheq consultaCbuCvuAlias',
+                   auth_users_json=json.dumps([{'username': 'demo', 'password_hash': PasswordHasher().hash(DEMO_KEY), 'role': 'admin'}]))
     operations = {}
     counter = 900000
 
@@ -43,6 +45,12 @@ def create_demo_app():
                 {'fecha': req.url.params['fechaHasta'], 'descripcion': 'ENCABEZADO', 'monto': 261792648.67, 'saldo': 261792648.67},
                 {'fecha': req.url.params['fechaHasta'], 'descripcion': 'Transferencia recibida DEMO', 'indDBCR': 'CR', 'monto': 150000, 'saldo': 261792648.67, 'nroComprobante': 'D001', 'idTransaccion': 'DEMO-001'},
                 {'fecha': req.url.params['fechaDesde'], 'descripcion': 'Pago a proveedor DEMO', 'indDBCR': 'DB', 'monto': 25000, 'saldo': 261642648.67, 'nroComprobante': 'D002', 'idTransaccion': 'DEMO-002'}]})
+        if route.endswith('/lista-cheques'):
+            return httpx.Response(200, json={'data': {'numeroAdherente': 661395, 'idOrigen': 'demo-list',
+                'echeqs': [{'chequeId': 'DEMOECHEQ001', 'numeroCheque': 1001,
+                            'cmc7completo': '19100000000000000000000000001', 'estado': 'ACTIVO',
+                            'beneficiarioRazonSocial': 'EMPRESA DEMO', 'monto': '1500.00',
+                            'fechaPago': {'value': '2026-09-04T00:00:00'}}], 'totalCheques': 1}, 'simulacion': True})
         if route.endswith('/cuentas-comitentes'):
             return httpx.Response(200, json={'data': {'estadoTestInversor': 'Vigente', 'perfilInversor': 'MODERADO',
                 'cuentasComitentes': [{'tipoCuenta': 'ORDI', 'sucursalCuenta': '119', 'numeroCuenta': '011123/9'}],

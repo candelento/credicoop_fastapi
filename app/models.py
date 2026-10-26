@@ -40,6 +40,38 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
 
+class LoginRequest(StrictModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    username: Annotated[str, Field(min_length=1, max_length=64)]
+    password: Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class UserCreateRequest(StrictModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    username: Annotated[str, Field(min_length=3, max_length=64, pattern=r'^[A-Za-z0-9_.-]+$')]
+    password: Annotated[str, Field(min_length=12, max_length=256)]
+    role: Literal['admin', 'user'] = 'user'
+
+
+class UserUpdateRequest(StrictModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    password: Annotated[str, Field(min_length=12, max_length=256)] | None = None
+    role: Literal['admin', 'user'] | None = None
+    active: bool | None = None
+
+    @model_validator(mode='after')
+    def require_change(self):
+        if not any(getattr(self, name) is not None for name in ('password', 'role', 'active')):
+            raise ValueError('Indicar al menos un dato para actualizar.')
+        return self
+
+
+class PasswordChangeRequest(StrictModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    current_password: Annotated[str, Field(min_length=1, max_length=256)]
+    new_password: Annotated[str, Field(min_length=12, max_length=256)]
+
+
 class Signer(StrictModel):
     documento: Annotated[str, Field(pattern=r'^\d{1,11}$')]
     documentoTipo: DocType = 'DNI'
@@ -99,6 +131,83 @@ class EcheqRequest(SignedInstruction):
         if len({x.numeroCheque is None for x in self.echeqs}) > 1:
             raise ValueError('No mezclar eCheqs con número de cheque y sin número.')
         return self
+
+
+EcheqAction = Literal['ACEPTAR', 'DEPOSITAR', 'ENDOSAR', 'PONER-EN-CUSTODIA']
+
+
+class EcheqManagementBeneficiary(StrictModel):
+    documento: CUI
+    documentoTipo: Literal['CUIT', 'CUIL', 'CDI']
+
+
+class EcheqManagementItem(StrictModel):
+    idCheque: Annotated[str, Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9]+$')] | None = None
+    cmc7: Annotated[str, Field(min_length=1, max_length=40, pattern=r'^\d+$')] | None = None
+    fechaPago: BankDate | None = None
+    monto: Money | None = None
+
+    @model_validator(mode='after')
+    def require_identifier(self):
+        if not self.idCheque and not self.cmc7:
+            raise ValueError('Informar idCheque o cmc7 para cada eCheq.')
+        return self
+
+
+class EcheqManagementRequest(StrictModel):
+    idOrigen: Origin
+    cbuCuenta: CBU
+    accion: EcheqAction
+    operadoresFirmantes: list[Signer] = Field(default_factory=list)
+    echeqs: list[EcheqManagementItem] = Field(min_length=1, max_length=100)
+    tipoEndoso: Literal['NOM'] | None = None
+    beneficiario: EcheqManagementBeneficiary | None = None
+
+    @model_validator(mode='after')
+    def validate_action_fields(self):
+        if self.accion in ('DEPOSITAR', 'PONER-EN-CUSTODIA'):
+            if any(item.fechaPago is None or item.monto is None for item in self.echeqs):
+                raise ValueError('Para depositar o poner en custodia, informar fechaPago y monto de cada eCheq.')
+        elif any(item.fechaPago is not None or item.monto is not None for item in self.echeqs):
+            raise ValueError('fechaPago y monto sólo se informan para depósito o custodia.')
+        if self.accion == 'ENDOSAR':
+            if self.tipoEndoso is None or self.beneficiario is None:
+                raise ValueError('Para endosar, informar tipoEndoso NOM y beneficiario.')
+        elif self.tipoEndoso is not None or self.beneficiario is not None:
+            raise ValueError('tipoEndoso y beneficiario sólo se informan al endosar.')
+        return self
+
+
+class EcheqListFilter(StrictModel):
+    gestion: Annotated[str, Field(min_length=1, max_length=30, pattern=r'^[A-Z_-]+$')] | None = None
+    estado: Annotated[str, Field(min_length=1, max_length=40, pattern=r'^[A-Z_-]+$')] | None = None
+    idCheque: Annotated[str, Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9]+$')] | None = None
+    cmc7: Annotated[str, Field(min_length=1, max_length=40, pattern=r'^\d+$')] | None = None
+    numeroCheque: Annotated[str, Field(min_length=1, max_length=20, pattern=r'^\d+$')] | None = None
+    cuitCuilCdi: CUI | None = None
+    fechaEmisionDesde: BankDate | None = None
+    fechaEmisionHasta: BankDate | None = None
+    fechaPagoDesde: BankDate | None = None
+    fechaPagoHasta: BankDate | None = None
+    cbuEmisor: CBU | None = None
+    moneda: Literal['ARS', 'USD'] | None = None
+    pagina: int = Field(default=1, ge=1, le=100000)
+    limite: int = Field(default=20, ge=1, le=1000)
+
+    @model_validator(mode='after')
+    def validate_date_ranges(self):
+        for start, end in ((self.fechaEmisionDesde, self.fechaEmisionHasta),
+                           (self.fechaPagoDesde, self.fechaPagoHasta)):
+            if (start is None) != (end is None):
+                raise ValueError('Informar las dos fechas de cada rango o ninguna.')
+            if start is not None and start > end:
+                raise ValueError('La fecha desde debe ser menor o igual a la fecha hasta.')
+        return self
+
+
+class EcheqListRequest(StrictModel):
+    idOrigen: Origin
+    filtro: EcheqListFilter
 
 
 class FciAccount(StrictModel):
@@ -201,6 +310,27 @@ def instruction_payload(instruction: TransferRequest | EcheqRequest, adherente: 
     for row in body.get('beneficiarios', body.get('echeqs', [])):
         if not row['mails']:
             del row['mails']
+    return body
+
+
+def echeq_management_payload(instruction: EcheqManagementRequest, adherente: int) -> dict:
+    body = instruction.model_dump(mode='json', exclude_none=True)
+    body['numeroAdherente'] = adherente
+    for index, item in enumerate(instruction.echeqs):
+        if item.fechaPago is not None:
+            body['echeqs'][index]['fechaPago'] = item.fechaPago.strftime('%Y%m%d')
+    if not body['operadoresFirmantes']:
+        del body['operadoresFirmantes']
+    return body
+
+
+def echeq_list_payload(instruction: EcheqListRequest, adherente: int) -> dict:
+    body = instruction.model_dump(mode='json', exclude_none=True)
+    body['numeroAdherente'] = adherente
+    for key in ('fechaEmisionDesde', 'fechaEmisionHasta', 'fechaPagoDesde', 'fechaPagoHasta'):
+        value = body['filtro'].get(key)
+        if value:
+            body['filtro'][key] = value.replace('-', '')
     return body
 
 

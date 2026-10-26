@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     journal_path: Path = Path('data/operaciones.sqlite3')
     fecha_operativa: date | None = date(2026, 8, 28)
     timeout: float = Field(default=30, gt=0, le=120)
+    log_movimientos: bool = True
+    auth_users_json: str = ''
+    session_idle_minutes: int = Field(default=15, ge=5, le=120)
+    session_cookie_secure: bool = False
     ca_bundle: Path | None = None
     scopes: str = 'cuentas transferenciasConFirma echeqConFirma fciConFirma beneficiarioTransferencia beneficiarioEcheq consultaCbuCvuAlias'
     drive_folder_id: str = '1xa_14O0TERbR_kPaQhledLGEl0p77m24'

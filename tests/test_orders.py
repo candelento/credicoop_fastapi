@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
@@ -46,6 +47,19 @@ def test_parse_transfer_amount_from_same_trb_line_and_build_instruction(monkeypa
     payload = build_order_instruction(order, DEBIT_CBU, date(2026, 8, 28))
     assert payload['beneficiarios'][0]['monto'] == '1234.56'
     assert payload['beneficiarios'][0]['cbuCvu'] == SUPPLIER.cbu
+
+
+def test_parse_op_metadata_and_rejects_supplier_document_mismatch(monkeypatch):
+    text = ('Nro Orden de Pago: OP-2026-123\nFecha de emisión: 01/10/2026\n'
+            'Beneficiario CUIT: 30677886370\nCBU Beneficiario: 0290023010000000555675\n'
+            'PROVEEDOR UNO SA\nTRB 1.234,56\nReferencia: FACTURA-88')
+    order = parsed(text, monkeypatch)
+    assert order['status'] == 'READY'
+    assert order['order_number'] == 'OP-2026-123'
+    assert order['issue_date'] == '2026-10-01'
+    assert order['references'] == ['FACTURA-88']
+    mismatch = parsed(text.replace('30677886370', '30546125501'), monkeypatch, file_id='mismatch')
+    assert mismatch['status'] == 'NEEDS_REVIEW' and 'CUIT/CUIL' in mismatch['reason']
 
 
 def test_parse_cheque_requires_date_and_always_builds_a_la_orden(monkeypatch):
@@ -194,3 +208,26 @@ def test_order_preview_is_read_only_and_send_is_explicit_and_once(tmp_path):
                             headers=headers, json={'cbuCuentaDebito': DEBIT_CBU})
         assert repeated.status_code == 409
         assert len(bank.calls) == 1
+
+
+def test_pdf_upload_is_unavailable_orders_must_come_from_drive(tmp_path):
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    key_path = tmp_path / 'private.pem'
+    key_path.write_bytes(private_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ))
+    master_path = tmp_path / 'suppliers.xlsx'
+    workbook = Workbook(); sheet = workbook.active; sheet.title = 'Beneficiarios Transferencias'
+    sheet.append(['NOMBRE', 'CUIT-CUIL-CDI', 'CBU'])
+    sheet.append([SUPPLIER.name, SUPPLIER.document, SUPPLIER.cbu]); workbook.save(master_path); workbook.close()
+    cfg = Settings(_env_file=None, api_key='a' * 40, private_key_path=key_path,
+                   supplier_master_path=master_path, journal_path=tmp_path / 'operations.sqlite3')
+    with TestClient(create_app(cfg, RecordingBank())) as api:
+        headers = {'X-API-Key': 'a' * 40}
+        result = api.post('/ordenes-pago/subir', headers=headers, files=[
+            ('archivos', ('op-001.pdf', b'%PDF-1.7 invalid-one', 'application/pdf')),
+            ('archivos', ('op-002.pdf', b'%PDF-1.7 invalid-two', 'application/pdf')),
+        ])
+        assert result.status_code == 404
+        assert '/ordenes-pago/subir' not in api.get('/openapi.json').json()['paths']
+        assert api.get('/ordenes-pago', headers=headers).json()['ordenes'] == []

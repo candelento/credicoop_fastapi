@@ -10,13 +10,61 @@ def test_home_assets_and_test_data_require_key():
     with TestClient(create_demo_app()) as api:
         home = api.get('/')
         assert home.status_code == 200 and 'text/html' in home.headers['content-type']
-        assert 'Preparación de pagos' in home.text
-        assert 'Órdenes de pago desde Google Drive' in home.text
+        assert 'data-view="proveedores"' not in home.text
+        assert 'Órdenes GECOM PDF' not in home.text
+        assert 'Órdenes GECOM ·' in home.text
+        assert 'Buscar importe' in home.text
+        assert 'class="nav-icon"' in home.text
+        assert 'aria-controls="primary-navigation"' in home.text
+        assert 'class="sidebar-logout"' in home.text
+        assert '<dialog id="reauth-dialog"' in home.text
+        assert 'cada 30 minutos' in home.text
+        assert 'Todo listo para revisar' in home.text
+        assert 'class="review-progress"' in home.text
+        assert 'Tu actividad, en un vistazo' in home.text
+        assert 'TU CENTRO DE OPERACIONES' not in home.text
+        assert 'Saldos, pagos y próximos pasos.' not in home.text
+        assert 'Seguí cada movimiento' in home.text
+        assert 'id="movement-kpis"' in home.text
+        assert 'id="movement-clear-filters"' in home.text
+        assert 'id="echeq-list-location"' not in home.text
+        assert 'id="echeq-manage-form"' not in home.text
+        assert 'Estados de eCheqs' not in home.text
+        assert 'Preparar una gestión' not in home.text
+        assert 'id="echeq-manage-id"' not in home.text
+        assert 'id="echeq-manage-cmc7"' not in home.text
+        assert 'class="connection"' not in home.text
+        assert 'id="session-profile"' in home.text
+        assert home.text.index('id="view-usuarios"') < home.text.index('id="change-password"')
+        assert 'Disponibilidad por cuenta' in home.text
+        assert 'dashboard-pending-total' in home.text
+        assert home.text.count('id="environment"') == 1
+        assert 'environment-detail' not in home.text
+        assert home.text.count('data-dashboard-view=') == 4
+        assert 'class="period-switch"' in home.text
+        assert home.text.count('aria-pressed="false"') == 3
+        assert 'type="file"' not in home.text
+        assert 'Importar PDF' not in home.text
+        assert 'Buscar en Drive' in home.text
+        assert '<dialog id="drive-order-preview"' in home.text
+        assert '<dialog id="drive-batch-preview"' in home.text
+        assert 'Confirmar y enviar a firma' in home.text
+        assert '<details open><summary>Datos que recibirá el banco' not in home.text
+        assert 'Consultar estado bancario' in home.text
+        assert 'Descargar JSON' not in home.text
         assert 'Fondos comunes de inversión 1810' in home.text
+        assert 'Sistema Bancario | RONANFER' in home.text
+        assert 'Iniciar sesión' in home.text
         assert 'frame-ancestors' in home.headers['content-security-policy']
         assert DEMO_KEY not in home.text
-        assert api.get('/static/app.js').status_code == 200
+        script = api.get('/static/app.js')
+        assert script.status_code == 200
+        assert '/echeqs/listar' not in script.text and '/echeqs/gestionar' not in script.text
+        assert '/ordenes-pago/subir' not in script.text
+        assert "openOrderReview('drive-order-preview')" in script.text
         assert api.get('/static/style.css').status_code == 200
+        assert api.get('/static/workspace.css').status_code == 200
+        assert api.get('/static/auth.css').status_code == 200
         assert api.get('/homologacion/beneficiarios').status_code == 401
         h = {'X-API-Key': DEMO_KEY}
         assert api.get('/ordenes-pago', headers=h).status_code == 404
@@ -54,6 +102,23 @@ def test_demo_never_requires_bank_credentials():
         r = api.post('/transferencias', json=request, headers=h)
         assert r.status_code == 200 and r.json()['respuesta_banco']['data']['simulacion']
         assert api.post('/transferencias', json=request, headers=h).status_code == 409
+
+
+def test_demo_user_session_dashboard_and_echeq_tools():
+    with TestClient(create_demo_app()) as api:
+        login = api.post('/login', json={'username': 'demo', 'password': DEMO_KEY})
+        assert login.status_code == 200 and 'httponly' in login.headers['set-cookie'].lower()
+        assert api.get('/auth/me').json()['usuario'] == 'demo'
+        dashboard = api.get('/dashboard')
+        assert dashboard.status_code == 200 and dashboard.json()['cantidad_cuentas'] == 2
+        listed = api.post('/echeqs/listar', json={'idOrigen': 'demo-list-001', 'filtro': {'estado': 'ACTIVO'}})
+        assert listed.status_code == 200 and listed.json()['data']['totalCheques'] == 1
+        body = {'idOrigen': 'demo-management-001', 'cbuCuenta': '1910000000000000000000',
+                'accion': 'ACEPTAR', 'echeqs': [{'idCheque': 'DEMOECHEQ001'}]}
+        managed = api.post('/echeqs/gestionar', json=body)
+        assert managed.status_code == 200 and managed.json()['respuesta_banco']['data']['simulacion']
+        local = api.get('/operaciones/echeq_gestion/demo-management-001')
+        assert local.status_code == 200 and local.json()['actor'] == 'demo'
 
 
 def test_demo_fci_is_simulated_and_uses_fixed_signer():

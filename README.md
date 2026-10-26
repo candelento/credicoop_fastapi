@@ -1,4 +1,4 @@
-# Credicoop API Empresas · Python + FastAPI
+# Sistema Bancario | RONANFER
 
 Proyecto para consultar cuentas, movimientos y Fondos Comunes de Inversión 1810, y generar transferencias, eCheqs y operaciones FCI **con firma posterior en Banca Internet Empresa (BIE)**. Incluye una CLI, vistas previas, consultas de estado, ejemplos y pruebas automatizadas sin operaciones bancarias reales.
 
@@ -20,9 +20,11 @@ Iniciá el servicio desde la carpeta del proyecto:
 .\.venv\Scripts\python.exe -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Abrí **http://127.0.0.1:8000/** para usar la pantalla HTML. Ingresá el valor de `CREDICOOP_API_KEY` de tu `.env` y presioná **Conectar**. Es una clave local generada por `configurar.py`; no es el token del banco. La pantalla mantiene esa clave en memoria y no la guarda en el navegador.
+Generá una contraseña nueva para cada usuario sin pasarla por argumentos ni guardarla en el código: ejecutá `.\.venv\Scripts\python.exe scripts\hash_password.py` para cada persona y copiá sólo el hash Argon2id en `CREDICOOP_AUTH_USERS_JSON` de `.env` (roles `admin` o `user`). Configurá como mínimo `IMRCandela` y `IMRMelisa`; la primera cuenta administrativa puede crear, desactivar y restablecer usuarios desde **Usuarios y auditoría**. No reutilices contraseñas compartidas en chats. En HTTPS configurá `CREDICOOP_SESSION_COOKIE_SECURE=true`; el ejemplo false es sólo para localhost HTTP.
 
-La documentación técnica sigue disponible en http://127.0.0.1:8000/docs. Para usarla, hacé clic en **Authorize** e ingresá la misma clave local. Los endpoints de negocio exigen el header `X-API-Key`.
+Abrí **http://127.0.0.1:8000/** e iniciá sesión con tu usuario. El navegador usa una cookie HttpOnly con expiración por inactividad; no necesita la clave API local. Cada **30 minutos desde la última validación de contraseña**, incluso con actividad, se bloquea la interfaz y se solicita la contraseña en una ventana. El servidor rechaza las operaciones de esa sesión con HTTP 428 hasta volver a autenticarse; la revalidación rota la cookie y conserva los límites de intentos fallidos. La expiración por inactividad sigue vigente y también solicita la contraseña si la pestaña está abierta. No se reenvían operaciones automáticamente y las vistas previas deben revisarse de nuevo. **Cerrar sesión** está al pie del menú lateral y también en el popup de bloqueo. Para integraciones/scripts y `/docs`, sigue disponible `CREDICOOP_API_KEY` y el header `X-API-Key`, sin este bloqueo interactivo.
+
+La aplicación audita accesos, consultas y envíos con usuario y fecha/hora. Mantiene el registro transaccional en SQLite para evitar duplicados y genera junto a la base un XLSX diario (`data/auditoria-AAAA-MM-DD.xlsx`) con una hoja por tipo de operación y otra de actividad; también permite exportar períodos desde la interfaz.
 
 En Linux/macOS, usá `python3 -m venv .venv`, `.venv/bin/python` y las mismas instrucciones con `/` como separador.
 
@@ -34,52 +36,43 @@ Para conocer la pantalla sin configurar `.env` ni la llave del banco, instalá `
 .\.venv\Scripts\python.exe -m uvicorn app.demo:create_demo_app --factory --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Abrí http://127.0.0.1:8000/ e ingresá esta clave exclusiva del modo demo:
+Abrí http://127.0.0.1:8000/ e iniciá sesión con las credenciales de demostración (no válidas para el servicio real):
 
 ```text
-demo-local-credicoop-12345678901234567890
+Usuario: demo
+Contraseña: demo-local-credicoop-12345678901234567890
 ```
 
 La pantalla muestra **Demo local · Sin banco**. Este servidor usa respuestas simuladas, cuentas ficticias y una llave RSA temporal. Las operaciones simuladas se pierden al reiniciar. No envía solicitudes a Credicoop y no usa la llave que recibiste del banco.
 
-Para hacer una prueba verdadera en homologación, detené el demo con `Ctrl+C` y arrancá `app.main:create_app` con la configuración de `.env`, tal como se indica en Inicio rápido. La etiqueta pasa a **Homologación** y debés ingresar la clave local de tu `.env`.
+Para hacer una prueba verdadera en homologación, detené el demo con `Ctrl+C` y arrancá `app.main:create_app` con la configuración de `.env`, tal como se indica en Inicio rápido. La etiqueta pasa a **Homologación** y se debe iniciar sesión con el usuario configurado en `CREDICOOP_AUTH_USERS_JSON`.
 
 ### Cómo operar desde el navegador
 
-1. **Cuentas y saldos:** presioná Conectar o Actualizar cuentas. Las cuentas disponibles se cargan en los selectores. Elegí la cuenta de débito por su número; el sistema incorpora su CBU al payload.
-2. **Movimientos:** elegí cuenta y fecha Desde. Hasta vacío usa hoy en Argentina. Para este ambiente de prueba, presioná Usar fechas de homologación y consultá hasta 28/08/2026. Podés descargar la respuesta en JSON; los encabezados de saldo se muestran aparte.
-3. **Transferencias:** elegí cuenta de débito, beneficiario del Excel de homologación y un importe de prueba. El selector copia nombre normalizado, documento y CBU/CVU. Consultar beneficiario en el banco permite verificar su presencia en la agenda del adherente. Revisá la respuesta.
-4. **eCheqs:** elegí un beneficiario de la lista específica de eCheq, un importe, tipo y fecha de pago. ECHC usa el día operativo; ECHD una fecha posterior. El ejemplo diferido propone 04/09/2026 cuando el ambiente está en 28/08/2026.
-5. **Revisión:** presioná Revisar vista previa. Ese paso valida el payload local y no envía pagos. Un cambio posterior en el formulario invalida la vista previa. Después de revisar, marcá la casilla y presioná Enviar a firma en el banco. Un cuadro muestra ambiente, importe, beneficiario, CBU de débito e ID para confirmar el envío.
-6. **Seguimiento:** la respuesta conserva idOperacion, idOrigen y estado real del banco. Consultá de nuevo tras firmar y activar en BIE. Ante un error o timeout, revisá primero el registro local; no crees un nuevo ID para repetir el mismo pago.
+1. **Cuentas y saldos:** iniciá sesión y consultá las cuentas activas. Elegí la cuenta de débito por su número; el sistema incorpora su CBU al payload. El botón XLSX exporta el saldo actual.
+2. **Movimientos:** elegí cuenta y fecha; usá los accesos rápidos de 24 horas/3/7 días o un rango personalizado. El resumen muestra operaciones, ingresos, egresos y saldo actual informado por el banco. Los filtros visibles permiten buscar por descripción, importe y tipo, con una acción para limpiarlos. La tabla se pagina; el XLSX incluye todo el período consultado, no solo las filas filtradas. Cambiar la cuenta o las fechas limpia la consulta anterior para evitar confundir resultados. Una respuesta incompleta se identifica como parcial, también en sus indicadores.
+3. **Transferencias · TRB:** la sección muestra exclusivamente órdenes GECOM cuyo método de pago es TRB. Seleccioná la cuenta de débito, revisá la vista previa y enviá a firma en BIE.
+4. **eCheqs · CHE:** la pantalla muestra solamente las órdenes GECOM de Drive cuyo método es CHE, con revisión y envío a firma. No incluye el listado bancario de eCheqs ni los formularios de aceptar, depositar, endosar o poner en custodia. Los endpoints de consulta y gestión se conservan para integraciones.
+5. **Revisión:** la vista previa valida el payload sin enviarlo. Un cambio posterior invalida la vista previa. Después de revisar, confirmá el envío a firma. Para depósito/custodia se exige monto y fecha por cada cheque; el endoso requiere beneficiario.
+6. **Inicio:** un encabezado compacto reúne el título, la fecha y los pendientes de firma, dejando más espacio a los indicadores, disponibilidad por cuenta y accesos directos a transferencias, eCheqs y movimientos. La fecha y la última sincronización se muestran por separado; el entorno aparece una sola vez en el encabezado (Demo, Homologación o Producción). Las operaciones de hoy muestran fecha/hora, usuario, beneficiario, importe, estado e idOrigen. El historial de actividad de Usuarios y auditoría lista operaciones, no solicitudes de consulta.
 
-### Probar las órdenes de proveedores con otros destinatarios
+### Órdenes GECOM en Transferencias y eCheqs
 
-**Preparación de pagos** muestra las tres órdenes del ejemplo y sus importes/retenciones originales. Elegí el medio de prueba de una orden y presioná Preparar prueba. La pantalla abre el formulario correspondiente con:
-
-- Un idOrigen nuevo exclusivamente para esa prueba.
-- Un importe inicial de **$15,79**, editable.
-- El nombre y monto del proveedor original visibles como referencia.
-- El selector de beneficiarios de homologación, que debés completar.
-- Fechas basadas en el calendario operativo del banco, sin reutilizar las fechas originales de octubre.
-
-Se conservan los PDFs y el Excel de preparación originales. La prueba usa la estructura de la orden, pero no sustituye los proveedores de la planilla real ni marca las órdenes originales como pagadas. Para procesar órdenes reales, usá la pestaña **Órdenes PDF** descrita a continuación.
-
-Si la orden indica CHE, el selector de la prueba ofrece transferencia o eCheq. Esto sirve para validar el circuito electrónico; un cheque físico continúa fuera de la API. Las listas de nuevas altas del Excel no aparecen en el selector de emisión. Los datos de homologación y las órdenes de ejemplo quedan bloqueados por el servidor cuando la URL configurada corresponde a otro ambiente.
-
-### Flujo real de órdenes PDF
-
-La pestaña **Órdenes PDF** lee de Google Drive la carpeta configurada por `CREDICOOP_DRIVE_FOLDER_ID` (por defecto, la carpeta indicada para las órdenes) y procesa exclusivamente los archivos con MIME `application/pdf` cuyo nombre empieza por `op-` y termina en `.pdf`. La cuenta de servicio de Google debe tener acceso de lector a esa carpeta. Guardá el JSON de credenciales localmente como `credentials.json` —o configurá `CREDICOOP_DRIVE_CREDENTIALS_PATH`—; la integración solicita únicamente `drive.readonly`, no modifica ni mueve archivos y nunca muestra la clave privada.
+Las órdenes se organizan dentro de **Transferencias · TRB** y **eCheqs · CHE**; no hay una sección genérica de órdenes ni una pantalla separada de preparación. En cada lugar se muestran únicamente los PDF `op-*.pdf` cuyo método detectado sea TRB o CHE, respectivamente. **Buscar en Drive** consulta exclusivamente la carpeta Google Drive configurada por `CREDICOOP_DRIVE_FOLDER_ID`; no se permite subir ni importar PDF locales desde la interfaz o la API. La lectura es de solo consulta. La cuenta de servicio de Google debe tener acceso de lector; guardá las credenciales localmente como `credentials.json` —o configurá `CREDICOOP_DRIVE_CREDENTIALS_PATH`—. Se solicita únicamente `drive.readonly` y no se modifican ni mueven archivos.
 
 El maestro `Beneficiarios_Credicoop.xlsx` debe estar en la raíz del proyecto, o se puede cambiar mediante `CREDICOOP_SUPPLIER_MASTER_PATH`. Se lee la hoja `Beneficiarios Transferencias` y las columnas `NOMBRE`, `CUIT-CUIL-CDI` y `CBU`. El sistema compara el nombre normalizado del PDF con nombres completos del maestro; no usa coincidencia aproximada. Si no hay exactamente un proveedor, los datos bancarios son inválidos, no puede extraerse un importe único de la misma línea que `TRB`/`CHE`, o la línea `CHE` no tiene exactamente una fecha válida, la orden queda en **Requiere revisión** y no puede enviarse.
 
-Las órdenes se registran en la base SQLite configurada por `CREDICOOP_JOURNAL_PATH`. El `fileId` de Drive evita reprocesar el mismo archivo y el SHA-256 evita importar copias idénticas; si cambia el contenido de un archivo ya importado, queda bloqueado para revisión. El botón **Buscar órdenes nuevas** permite volver a escanear la carpeta sin duplicar pagos.
+Las órdenes se registran en la base SQLite configurada por `CREDICOOP_JOURNAL_PATH`. El `fileId` de Drive evita reprocesar el mismo archivo y el SHA-256 evita importar copias idénticas; si cambia el contenido de un archivo ya importado, queda bloqueado para revisión.
 
-Para cada orden lista, seleccioná una cuenta de débito y revisá la vista previa. `TRB` genera una transferencia a ConFirma; `CHE` genera un eCheq “A la orden” (`caracter=1`). La fecha de la línea `CHE` se usa como fecha de pago y determina ECHC (igual a la fecha operativa configurada) o ECHD (posterior); una fecha anterior queda para revisión. Sólo al marcar la confirmación y aceptar el último cuadro se envía la operación a Credicoop para firma posterior en BIE. No se ejecutan pagos ni se completan firmas automáticamente. La importación desde Drive está deshabilitada en el modo Demo local.
+Para cada orden lista, seleccioná una cuenta de débito y pulsá **Revisar**: se abre **Todo listo para revisar**, con el importe destacado, proveedor, destino y cuenta de débito en tarjetas. El indicador de pasos distingue la revisión, el envío a firma y la posterior autorización en BIE. El JSON bancario queda plegado en **Ver datos técnicos que recibirá el banco**. Marcá la verificación de los datos y pulsá **Confirmar y enviar a firma**; cerrar o volver no envía nada. **Revisar selección** abre una ventana equivalente con el detalle de cada orden y el total del lote. `TRB` genera una transferencia a ConFirma; `CHE` genera un eCheq “A la orden” (`caracter=1`). La fecha de la línea `CHE` se usa como fecha de pago y determina ECHC (igual a la fecha operativa configurada) o ECHD (posterior); una fecha anterior queda para revisión. El envío requiere confirmación explícita y la firma se completa después en BIE. La lectura desde Drive está deshabilitada en el modo Demo local.
 
-Endpoints locales autenticados con `X-API-Key`: `GET /ordenes-pago` lista órdenes importadas, `POST /ordenes-pago/sincronizar` sincroniza de solo lectura, `POST /ordenes-pago/{fileId}/previsualizar` prepara una vista previa con el CBU de débito elegido, y `POST /ordenes-pago/{fileId}/enviar` envía la orden a ConFirma. Un intento existente, incluso con resultado incierto, no se puede reenviar; consultá el registro y el banco antes de cualquier acción.
+Endpoints locales autenticados con sesión de usuario o `X-API-Key`: `GET /ordenes-pago` lista órdenes registradas, `POST /ordenes-pago/sincronizar` sincroniza Drive en modo de solo lectura, `POST /ordenes-pago/{fileId}/previsualizar` prepara una vista previa y `POST /ordenes-pago/{fileId}/enviar` envía a ConFirma. El endpoint de carga local `POST /ordenes-pago/subir` ya no está disponible. Un intento existente, incluso con resultado incierto, no se puede reenviar.
 
-La pantalla deja revisar una operación individual por vez. Los endpoints JSON mantienen el soporte para lotes documentado más abajo. El formulario permite un firmante opcional; para indicar varios operadores usá los endpoints JSON.
+### Consulta de estado bancario
+
+La consulta está en **Inicio**. Para transferencias, la documentación bancaria ofrece una consulta individual que necesita `idOperacion` o `idOrigen`; la interfaz evita pedir esos datos manualmente y lista las transferencias registradas por esta aplicación. El botón de cada fila consulta al banco usando el `idOrigen` ya guardado. Esto no incluye transferencias iniciadas fuera de la aplicación. Para eCheqs, el endpoint oficial de listado permite filtrar y paginar sin que el usuario ingrese `idOperacion`; la interfaz genera un `idOrigen` técnico para la solicitud y pide los rangos de emisión y pago.
+
+La documentación consultada: [Consulta de Transferencia](https://www.bancocredicoop.coop/apiempresas/docs/apis/transferencias/consultaTransferencia/) y [Consulta Listado de Echeqs](https://www.bancocredicoop.coop/apiempresas/docs/apis/echeq/listarEcheqs/).
 
 ## Configuración inicial
 
@@ -97,7 +90,9 @@ Los adherentes, cuentas, firmantes y fechas de ejemplo de Postman **no se usan c
 
 La autenticación genera una nueva assertion JWT RS256, con `iss`, `sub`, `aud`, `iat`, `exp` y `jti`, válida durante 60 segundos. Usa `client_credentials` y renueva el access token según `expires_in`; conserva el token sólo en memoria. La firma criptográfica de autenticación no firma ni autoriza los pagos.
 
-El proyecto solicita únicamente los scopes que usa: `cuentas`, `transferenciasConFirma`, `echeqConFirma`, `fciConFirma`, `beneficiarioTransferencia`, `beneficiarioEcheq` y `consultaCbuCvuAlias`. No implementa VEP ni DEBIN en esta versión.
+El acceso web usa usuarios con hashes Argon2id definidos inicialmente en `CREDICOOP_AUTH_USERS_JSON`; la contraseña no se configura en texto plano. Ejecutá `scripts/hash_password.py` por usuario para generar cada hash. Las sesiones usan cookie HttpOnly/SameSite, vencimiento absoluto e inactividad configurable (`CREDICOOP_SESSION_IDLE_MINUTES`), bloqueo temporal tras cinco fallos y auditoría de accesos. El administrador puede crear usuarios, desactivarlos lógicamente y restablecer contraseñas; cada usuario puede cambiar la propia. La cuenta API `X-API-Key` se conserva sólo para compatibilidad de integraciones y `/docs`.
+
+El proyecto solicita únicamente los scopes que usa: `cuentas`, `transferenciasConFirma`, `echeqConFirma`, `fciConFirma`, `beneficiarioTransferencia`, `beneficiarioEcheq` y `consultaCbuCvuAlias`. `echeqConFirma` se usa para consultar el listado y gestionar eCheqs con firma en BIE; no se habilitan acciones de envío directo. No implementa VEP ni DEBIN en esta versión.
 
 ## Las cuatro funciones solicitadas
 
@@ -108,16 +103,22 @@ El proyecto solicita únicamente los scopes que usa: `cuentas`, `transferenciasC
 | Movimientos entre fechas | `GET /cuentas/{nro_cuenta}/movimientos?fecha_desde=2026-08-01&fecha_hasta=2026-08-28` |
 | Transferencia pendiente de firma | `POST /transferencias` |
 | Emisión eCheq pendiente de firma | `POST /echeqs` |
+| Consultar eCheqs con filtros y paginación | `POST /echeqs/listar` |
+| Previsualizar y gestionar eCheqs a firma | `POST /echeqs/gestionar/previsualizar`, `POST /echeqs/gestionar` |
 
 `nro_cuenta` es el campo `nroCuenta` devuelto por `/cuentas`, conservando ceros iniciales. Para pagos se usa el **CBU de 22 dígitos**, que también devuelve esa consulta.
 
 ### Movimientos y fecha predeterminada
+
+La integración con el banco consulta cuentas en `GET /api/cuentas/v2/listaCuentas` y movimientos en `GET /api/cuentas/v2/{nroCuenta}/movimientos`, enviando `fechaDesde` y `fechaHasta` en formato `AAAAMMDD` y, si corresponde, `codOperativo`.
 
 `fecha_desde` es obligatoria. Si no indicás `fecha_hasta`, se toma la **fecha actual de Argentina**, como pediste. La API local acepta `AAAA-MM-DD` y convierte al formato `AAAAMMDD` del banco. La fecha operativa fija sólo se usa para validar los pagos; no sustituye silenciosamente la fecha actual de las consultas.
 
 Como homologación está posicionada en el 28/08/2026, para probar agosto indicá `fecha_hasta=2026-08-28`. Las consultas posteriores pueden ser rechazadas por el banco. `/configuracion` muestra ambas fechas, y la respuesta de movimientos advierte si consultaste más allá de la fecha de prueba configurada. Si el banco mueve el ambiente, actualizá `CREDICOOP_FECHA_OPERATIVA`.
 
 Si el banco devuelve `alerta` por exceso de registros, el cliente divide el rango en subrangos sin superposición. Si incluso un día excede el tope, devuelve `completa=false` y `rangos_incompletos`. No presenta resultados parciales como completos. Los `ENCABEZADO` se separan de los movimientos porque representan saldos. Se admiten rangos de hasta 367 días por consulta local. Las consultas grandes pueden tardar varios minutos por los límites del banco.
+
+Cada consulta de movimientos (cuentas corrientes y FCI, lista y detalle) registra en el log de la aplicación el REQUEST enviado al banco —método, ruta, parámetros y body— y el RESPONSE recibido —código HTTP, duración y payload— con los secretos redactados. Se controla con `CREDICOOP_LOG_MOVIMIENTOS` (`true` por defecto); las demás consultas no se loguean.
 
 ### Transferencias
 
@@ -140,6 +141,8 @@ El procedimiento es equivalente, con `ejemplos/echeq.json`, `/beneficiarios/eche
 `tipoCheque=ECHC` requiere fecha de pago igual al día operativo. `ECHD` requiere una fecha posterior. En homologación se comparan con 28/08/2026. Se exige modo cruzado (`modo="1"`) y el carácter se fija siempre como A la orden (`caracter="1"`). No se mezclan cheques con y sin `numeroCheque` dentro del mismo lote. El máximo de eCheqs por lote está parametrizado por el banco y lo valida el banco.
 
 La colección Postman admite `idOrigen` para consultar emisión, mientras que la documentación pública sólo describe `idOperacion`. El endpoint local de eCheq utiliza el parámetro documentado `id_operacion`; si se pierde la respuesta de emisión, revisá el registro local y BIE o consultá al banco antes de repetir.
+
+El listado oficial se consulta con `POST /echeqs/listar`, enviando un `idOrigen` técnico generado por la aplicación y un objeto `filtro` con gestión, estado, fechas y paginación. Estos endpoints están disponibles para integraciones y documentación de la API; el listado bancario y sus formularios de gestión se retiraron de la interfaz web. La sección **eCheqs** conserva únicamente las órdenes CHE leídas desde Drive. La gestión usa `POST /echeqs/gestionar/previsualizar` y `POST /echeqs/gestionar`; admite `ACEPTAR`, `DEPOSITAR`, `ENDOSAR` y `PONER-EN-CUSTODIA`, y se envía únicamente a `/api/echeq/v1/ConFirma/gestion`. Depósito/custodia requieren monto y fecha por cheque; endoso requiere tipo `NOM` y beneficiario. Los envíos quedan registrados por `idOrigen`; la respuesta de gestión documentada no contiene `idOperacion`, por lo que el seguimiento se hace con el registro local y BIE.
 
 ### Firmantes
 
